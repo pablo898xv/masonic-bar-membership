@@ -163,17 +163,49 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* Run Expiry Check */}
+      {/* Email Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">Email Notifications</h2>
+            <Badge variant="warning">Not Configured</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-600 mb-4">
+            Send renewal reminder emails to members when their membership is expiring.
+            Reminders are sent 30 days before expiry.
+          </p>
+          <div className="bg-yellow-50 p-4 rounded-lg mb-4">
+            <h3 className="font-medium text-yellow-800 mb-2">SMTP Configuration Required</h3>
+            <p className="text-sm text-yellow-700">
+              Set these environment variables to enable email:
+            </p>
+            <ul className="text-sm text-yellow-700 list-disc list-inside mt-2 space-y-1">
+              <li>SMTP_HOST - SMTP server hostname</li>
+              <li>SMTP_PORT - SMTP server port (default: 587)</li>
+              <li>SMTP_USER - SMTP username</li>
+              <li>SMTP_PASS - SMTP password</li>
+              <li>EMAIL_FROM - From address for emails</li>
+            </ul>
+          </div>
+          <p className="text-xs text-gray-500">
+            Without email configuration, renewal reminders will be logged but not sent.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Maintenance */}
       <Card>
         <CardHeader>
           <h2 className="text-lg font-semibold text-gray-900">Maintenance</h2>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-medium text-gray-900">Check Expired Memberships</h3>
               <p className="text-sm text-gray-500">
-                Manually run the expiry check to mark expired memberships and disable till system access.
+                Mark expired memberships and disable till system access.
               </p>
             </div>
             <Button
@@ -189,6 +221,29 @@ export default function SettingsPage() {
               }}
             >
               Run Now
+            </Button>
+          </div>
+
+          <div className="border-t border-gray-200 pt-6 flex items-center justify-between">
+            <div>
+              <h3 className="font-medium text-gray-900">Send Renewal Reminders</h3>
+              <p className="text-sm text-gray-500">
+                Send email reminders to members expiring in the next 30 days.
+              </p>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/cron/send-renewal-reminders', { method: 'POST' })
+                  const data = await res.json()
+                  alert(`Processed: ${data.processed}, Emails sent: ${data.emailsSent}, Already sent: ${data.alreadySent}${data.emailConfigured ? '' : '\n\nNote: Email not configured - reminders were logged only'}`)
+                } catch (error) {
+                  alert('Failed to send renewal reminders')
+                }
+              }}
+            >
+              Send Reminders
             </Button>
           </div>
         </CardContent>

@@ -51,6 +51,12 @@ A comprehensive membership management system for the Masonic Hall Bar, supportin
 - Renewal workflow for existing memberships
 - Expiring memberships alerts
 
+### Renewal Reminders
+- Automated email reminders sent 30 days before expiry
+- Members receive personalized renewal links
+- Self-service renewal page for cardholders
+- Tracks sent reminders to avoid duplicates
+
 ## Getting Started
 
 ### Prerequisites
@@ -104,6 +110,13 @@ MAGSTRIPE_PREFIX=";9998"
 
 # Application URL
 NEXT_PUBLIC_APP_URL="http://localhost:3000"
+
+# Email Configuration (SMTP)
+SMTP_HOST=""
+SMTP_PORT="587"
+SMTP_USER=""
+SMTP_PASS=""
+EMAIL_FROM="Masonic Hall Bar <noreply@masonichall.bar>"
 
 # Cron Job Secret (optional)
 CRON_SECRET=""
@@ -186,8 +199,9 @@ Public registration at `/membership/register`:
 - `POST /api/till-system/disable` - Disable card
 - `GET /api/till-system/status` - Check card status
 
-#### Maintenance
-- `POST /api/cron/check-expiry` - Run expiry check
+#### Maintenance / Cron
+- `POST /api/cron/check-expiry` - Run expiry check and disable expired cards
+- `POST /api/cron/send-renewal-reminders` - Send 30-day renewal reminder emails
 
 ## Integration Notes
 
