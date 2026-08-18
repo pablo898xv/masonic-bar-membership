@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Member {
+  id          String   @id @default(uuid())
+  name        String
+  email       String   @unique
+  phone       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  memberships Membership[]
+}
+
+model MembershipNumber {
+  id            String   @id @default(uuid())
+  cardNumber    Int      @unique
+  batchId       String?
+  isAssigned    Boolean  @default(false)
+  assignedAt    DateTime?
+  createdAt     DateTime @default(now())
+  
+  membership    Membership?
+}
+
+model SubscriptionPlan {
+  id            String   @id @default(uuid())
+  name          String
+  durationYears Int
+  price         Float
+  currency      String   @default("GBP")
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  memberships   Membership[]
+}
+
+model Membership {
+  id                  String   @id @default(uuid())
+  memberId            String
+  membershipNumberId  String   @unique
+  subscriptionPlanId  String
+  
+  cardType            String   // "QR_CODE" or "PHYSICAL_CARD"
+  status              String   @default("PENDING_PAYMENT") // PENDING_PAYMENT, PAID, ACTIVE, EXPIRED, CANCELLED
+  
+  startDate           DateTime?
+  expiryDate          DateTime?
+  
+  paymentId           String?
+  paymentMethod       String?  // "CARD" or "OPEN_BANKING"
+  paymentStatus       String   @default("PENDING") // PENDING, COMPLETED, FAILED, REFUNDED
+  
+  tollSystemEnabled   Boolean  @default(false)
+  tollSystemEnabledAt DateTime?
+  
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  member              Member           @relation(fields: [memberId], references: [id])
+  membershipNumber    MembershipNumber @relation(fields: [membershipNumberId], references: [id])
+  subscriptionPlan    SubscriptionPlan @relation(fields: [subscriptionPlanId], references: [id])
+  cardIssuance        CardIssuance?
+}
+
+model CardIssuance {
+  id              String   @id @default(uuid())
+  membershipId    String   @unique
+  
+  queueStatus     String   @default("PENDING") // PENDING, READY_TO_ENCODE, ENCODED, ISSUED, SHIPPED
+  magstripeData   String?  // The full track data for encoding (e.g., ";99981500")
+  
+  encodedAt       DateTime?
+  encodedBy       String?
+  issuedAt        DateTime?
+  issuedBy        String?
+  
+  notes           String?
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  membership      Membership @relation(fields: [membershipId], references: [id])
+}
+
+model WalletPass {
+  id              String   @id @default(uuid())
+  membershipId    String
+  passTypeId      String
+  serialNumber    String   @unique
+  authToken       String
+  qrCodeData      String
+  passUrl         String?
+  
+  deviceLibraryId String?
+  pushToken       String?
+  lastUpdated     DateTime @default(now())
+  
+  createdAt       DateTime @default(now())
+}
+
+model PaymentTransaction {
+  id              String   @id @default(uuid())
+  membershipId    String?
+  
+  amount          Float
+  currency        String   @default("GBP")
+  paymentMethod   String   // "CARD", "OPEN_BANKING"
+  provider        String   // "PIXL_PAY", "DOJO"
+  
+  externalId      String?  // Pixl Pay transaction ID
+  status          String   @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED, REFUNDED
+  
+  metadata        String?  // JSON string for additional data
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model SystemConfig {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String   @default("MANAGER") // ADMIN, MANAGER
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
