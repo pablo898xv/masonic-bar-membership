@@ -1,254 +1,283 @@
-# Masonic Hall Bar - Membership Discount Card Platform
+# Masonic Bar Membership Management Platform
 
-A comprehensive membership management system for the Masonic Hall Bar, supporting both digital QR code cards and physical magstripe cards.
+A comprehensive membership discount card management platform for the Masonic Hall bar, built with Next.js 16 and Firebase (Firestore).
 
 ## Features
 
-### Member Management
-- Member registration with name, email, and phone number
-- Member search and management interface
-- Member profile with membership history
+- **Member Management**: Track member names, emails, and phone numbers
+- **Digital Membership Cards**: QR code-based ewallet tickets (Apple Wallet compatible)
+- **Physical Card Support**: Magstripe card encoding with prefix configuration
+- **Subscription Management**: Multiple subscription plans with annual duration support
+- **Payment Integration**: Pixl Pay integration for card and open banking payments
+- **Card Issuance Queue**: Bar manager interface for processing physical cards
+- **Till System Integration**: API integration for enabling/disabling cards at the point of sale
+- **Renewal Reminders**: Automated email notifications for expiring memberships
 
-### Membership Cards
-- **Digital QR Code Cards**: Instant issue digital membership cards
-  - QR code generation for easy scanning at the bar
-  - Apple Wallet pass support (requires configuration)
-  - Downloadable QR code images
-  
-- **Physical Magstripe Cards**: Traditional swipe cards
-  - Magstripe encoding queue for bar manager
-  - Track 1 data format: `{PREFIX}{CARD_NUMBER}` (e.g., `;99981500`)
-  - Card issuance tracking workflow
+## Tech Stack
 
-### Card Number Management
-- Import sequential batches of card numbers
-- Track assigned vs available numbers
-- Support for physical card inventory management
+- **Frontend**: Next.js 16 (App Router), React, TypeScript, Tailwind CSS
+- **Database**: Firebase Firestore
+- **Authentication**: Firebase Admin SDK + JWT
+- **Validation**: Zod
+- **QR Codes**: qrcode library
+- **Emails**: Nodemailer
+- **Hosting**: Firebase Hosting with Cloud Functions
 
-### Subscription Plans
-- Configurable subscription periods (1 year, 2 years, etc.)
-- Flexible pricing per plan
-- Active/inactive plan management
+## Firebase Setup
 
-### Payment Integration
-- **Pixl Pay Platform** integration stub (to be connected)
-  - Card payments via Dojo
-  - Open Banking payments
-- Mock payment flow for development/testing
+### 1. Create a Firebase Project
 
-### Till System Integration
-- API stub for external till system integration
-- Enable/disable cards for access control
-- Automatic expiry handling
+1. Go to [Firebase Console](https://console.firebase.google.com/)
+2. Click "Add project" and follow the setup wizard
+3. Enable Firestore Database (choose a region close to your users, e.g., `europe-west1`)
+4. Enable Firebase Authentication (optional, for enhanced security)
 
-### Card Issuance Queue
-- Queue management for physical card processing
-- States: Pending → Ready to Encode → Encoded → Issued
-- Magstripe encoding instructions with data display
+### 2. Get Firebase Configuration
 
-### Expiry Management
-- Automatic expiry checking (cron endpoint)
-- Renewal workflow for existing memberships
-- Expiring memberships alerts
+1. In Firebase Console, go to Project Settings > General
+2. Scroll down to "Your apps" and click the web icon (`</>`) to add a web app
+3. Register your app and copy the `firebaseConfig` object
 
-### Renewal Reminders
-- Automated email reminders sent 30 days before expiry
-- Members receive personalized renewal links
-- Self-service renewal page for cardholders
-- Tracks sent reminders to avoid duplicates
+### 3. Create Service Account Key
 
-## Getting Started
+1. In Firebase Console, go to Project Settings > Service Accounts
+2. Click "Generate new private key"
+3. Save the JSON file securely (never commit to version control)
 
-### Prerequisites
-- Node.js 18+
-- npm or yarn
+### 4. Configure Environment Variables
 
-### Installation
+Copy `.env` to `.env.local` and fill in your Firebase configuration:
+
+```bash
+# Server-side Firebase (choose one option)
+FIREBASE_PROJECT_ID=your-project-id
+# Option 1: JSON string (for cloud deployment)
+FIREBASE_SERVICE_ACCOUNT_KEY={"type":"service_account",...}
+# Option 2: File path (for local development)
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json
+
+# Client-side Firebase
+NEXT_PUBLIC_FIREBASE_API_KEY=your-api-key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
+NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123
+```
+
+### 5. Deploy Firestore Rules and Indexes
+
+```bash
+# Install Firebase CLI
+npm install -g firebase-tools
+
+# Login to Firebase
+firebase login
+
+# Deploy Firestore rules and indexes
+firebase deploy --only firestore
+```
+
+## Local Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Generate Prisma client
-npx prisma generate
-
-# Create database
-npx prisma db push
-
 # Run development server
 npm run dev
 ```
 
-### Environment Variables
+Open [http://localhost:3000](http://localhost:3000)
 
-Copy `.env` and configure:
+### Using Firebase Emulators (Recommended for Development)
 
-```env
-# Database
-DATABASE_URL="file:./dev.db"
+```bash
+# Install Firebase CLI if not already installed
+npm install -g firebase-tools
 
-# JWT Secret for admin authentication
-JWT_SECRET="your-super-secret-jwt-key-change-in-production"
+# Start emulators
+firebase emulators:start
 
-# Pixl Pay Integration
-PIXL_PAY_API_URL="https://api.pixlpay.example.com"
-PIXL_PAY_API_KEY=""
-PIXL_PAY_MERCHANT_ID=""
-
-# Till System Integration
-TILL_SYSTEM_API_URL=""
-TILL_SYSTEM_API_KEY=""
-
-# Apple Wallet Pass Configuration
-PASS_TYPE_IDENTIFIER="pass.com.masonichall.membership"
-TEAM_IDENTIFIER="YOUR_APPLE_TEAM_ID"
-PASS_CERTIFICATE_PATH="./certs/pass.p12"
-PASS_CERTIFICATE_PASSWORD=""
-
-# Magstripe Card Configuration
-MAGSTRIPE_PREFIX=";9998"
-
-# Application URL
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
-
-# Email Configuration (SMTP)
-SMTP_HOST=""
-SMTP_PORT="587"
-SMTP_USER=""
-SMTP_PASS=""
-EMAIL_FROM="Masonic Hall Bar <noreply@masonichall.bar>"
-
-# Cron Job Secret (optional)
-CRON_SECRET=""
+# Set environment variable to use emulator
+FIRESTORE_EMULATOR_HOST=localhost:8080
 ```
 
-## Usage
+## Deployment to Firebase
 
-### Admin Dashboard
+### 1. Initialize Firebase Hosting
 
-Access the admin dashboard at `/admin`:
+```bash
+# Initialize (if not already done)
+firebase init hosting
 
-1. **Dashboard**: Overview of members, memberships, and card queue status
-2. **Members**: Add and manage members
-3. **Memberships**: View all memberships and their status
-4. **Card Queue**: Process physical card encoding and issuance
-5. **Card Numbers**: Import and manage card number inventory
-6. **Subscriptions**: Configure membership plans and pricing
-7. **Settings**: Integration status and maintenance
+# Select "Use an existing project" and choose your project
+# For public directory, keep the default or use "out"
+# Configure as SPA: No (Next.js handles routing)
+```
 
-### Member Registration
+### 2. Deploy
 
-Public registration at `/membership/register`:
+```bash
+# Build and deploy
+npm run build
+firebase deploy
+```
 
-1. Enter personal details (name, email, phone)
-2. Select subscription plan and card type
-3. Choose payment method
-4. Complete payment
-5. Receive digital card (QR) or wait for physical card
+For Next.js with Firebase, you can use the experimental Firebase Hosting with Web Frameworks:
 
-### Physical Card Workflow
+```bash
+# Enable web frameworks (experimental)
+firebase experiments:enable webframeworks
 
-1. Member purchases physical card membership
-2. Payment completes → card enters "Ready to Encode" queue
-3. Bar manager encodes magstripe data using card writer
-4. Card marked as "Encoded"
-5. Member collects card → marked as "Issued"
-6. System enables card in till system
+# Deploy (this will automatically detect Next.js)
+firebase deploy
+```
 
-### API Endpoints
+## Cloud Scheduler Setup (Cron Jobs)
 
-#### Members
-- `GET /api/members` - List members
-- `POST /api/members` - Create member
-- `GET /api/members/[id]` - Get member
+Set up scheduled tasks using Google Cloud Scheduler:
+
+### 1. Enable Cloud Scheduler API
+
+```bash
+gcloud services enable cloudscheduler.googleapis.com
+```
+
+### 2. Create Scheduled Jobs
+
+```bash
+# Check membership expiry daily at midnight
+gcloud scheduler jobs create http membership-expiry-check \
+  --location=europe-west1 \
+  --schedule="0 0 * * *" \
+  --uri="https://your-app.web.app/api/cron/check-expiry" \
+  --http-method=POST \
+  --headers="Authorization=Bearer YOUR_CRON_SECRET"
+
+# Send renewal reminders daily at 9 AM
+gcloud scheduler jobs create http membership-renewal-reminders \
+  --location=europe-west1 \
+  --schedule="0 9 * * *" \
+  --uri="https://your-app.web.app/api/cron/send-renewal-reminders" \
+  --http-method=POST \
+  --headers="Authorization=Bearer YOUR_CRON_SECRET"
+```
+
+## API Endpoints
+
+### Members
+- `GET /api/members` - List all members (with pagination and search)
+- `POST /api/members` - Create a new member
+- `GET /api/members/[id]` - Get member details
 - `PATCH /api/members/[id]` - Update member
+- `DELETE /api/members/[id]` - Delete member
 
-#### Memberships
-- `GET /api/memberships` - List memberships
-- `POST /api/memberships` - Create membership
-- `GET /api/memberships/[id]` - Get membership
-- `POST /api/memberships/[id]/activate` - Activate membership
-- `POST /api/memberships/[id]/renew` - Renew membership
-- `GET /api/memberships/[id]/wallet-pass` - Get wallet pass/QR code
-- `GET /api/memberships/expiring` - Get expiring memberships
+### Card Numbers
+- `GET /api/card-numbers` - List card numbers with stats
+- `POST /api/card-numbers` - Import sequential card numbers
+- `GET /api/card-numbers/available` - Get next available card number
 
-#### Card Numbers
-- `GET /api/card-numbers` - List card numbers
-- `POST /api/card-numbers` - Import card numbers
-- `GET /api/card-numbers/available` - Get next available number
-
-#### Card Issuance
-- `GET /api/card-issuance` - List card issuances
-- `GET /api/card-issuance/queue` - Get issuance queue
-- `PATCH /api/card-issuance/[id]` - Update issuance status
-- `POST /api/card-issuance/[id]/encode` - Mark as encoded
-- `POST /api/card-issuance/[id]/issue` - Mark as issued
-
-#### Subscription Plans
-- `GET /api/subscription-plans` - List plans
-- `POST /api/subscription-plans` - Create plan
+### Subscription Plans
+- `GET /api/subscription-plans` - List all plans
+- `POST /api/subscription-plans` - Create a new plan
+- `GET /api/subscription-plans/[id]` - Get plan details
 - `PATCH /api/subscription-plans/[id]` - Update plan
+- `DELETE /api/subscription-plans/[id]` - Delete/deactivate plan
 
-#### Payments
-- `POST /api/payments/initiate` - Initiate payment
-- `POST /api/payments/webhook` - Payment webhook
-- `GET /api/payments/mock-checkout` - Mock checkout (dev)
+### Memberships
+- `GET /api/memberships` - List all memberships
+- `POST /api/memberships` - Create new membership (purchase)
+- `GET /api/memberships/[id]` - Get membership details
+- `PATCH /api/memberships/[id]` - Update membership
+- `POST /api/memberships/[id]/activate` - Activate a paid membership
+- `POST /api/memberships/[id]/renew` - Renew an existing membership
+- `GET /api/memberships/[id]/wallet-pass` - Get QR code or Apple Wallet pass
+- `GET /api/memberships/expiring` - List expiring memberships
 
-#### Till System
-- `POST /api/till-system/enable` - Enable card
-- `POST /api/till-system/disable` - Disable card
-- `GET /api/till-system/status` - Check card status
+### Card Issuance Queue
+- `GET /api/card-issuance` - List all card issuances
+- `GET /api/card-issuance/queue` - Get prioritized processing queue
+- `GET /api/card-issuance/[id]` - Get issuance details
+- `PATCH /api/card-issuance/[id]` - Update issuance
+- `POST /api/card-issuance/[id]/encode` - Mark card as encoded
+- `POST /api/card-issuance/[id]/issue` - Mark card as issued
 
-#### Maintenance / Cron
-- `POST /api/cron/check-expiry` - Run expiry check and disable expired cards
-- `POST /api/cron/send-renewal-reminders` - Send 30-day renewal reminder emails
+### Payments
+- `POST /api/payments/initiate` - Start a payment
+- `GET /api/payments/initiate` - Check payment status
+- `POST /api/payments/webhook` - Pixl Pay webhook handler
+- `GET /api/payments/mock-checkout` - Mock payment page (dev)
+- `POST /api/payments/mock-complete` - Complete mock payment (dev)
+
+### Till System
+- `POST /api/till-system/enable` - Enable card in till system
+- `POST /api/till-system/disable` - Disable card in till system
+- `GET /api/till-system/status` - Check card status in till system
+
+### Cron Jobs
+- `POST /api/cron/check-expiry` - Check and expire memberships
+- `POST /api/cron/send-renewal-reminders` - Send renewal reminder emails
+
+### Authentication
+- `POST /api/auth/login` - Admin login
+- `POST /api/auth/register` - Register first admin
+- `GET /api/auth/me` - Get current admin user
+
+## Magstripe Card Encoding
+
+Physical cards are encoded with Track 1 data in the format:
+```
+;{PREFIX}{CARD_NUMBER}
+```
+
+Example: For prefix `;9998` and card number `1500`, the track data is `;99981500`
+
+Configure the prefix in environment variables:
+```
+MAGSTRIPE_PREFIX=;9998
+```
 
 ## Integration Notes
 
-### Pixl Pay Integration
+### Pixl Pay
+- Configure `PIXL_PAY_API_URL` and `PIXL_PAY_API_KEY` when the Pixl Pay platform is ready
+- Supports both card payments (Dojo) and open banking
+- Webhook endpoint at `/api/payments/webhook` for payment status updates
 
-The payment integration is stubbed and ready for connection to the Pixl Pay platform. Configure the following:
+### Till System
+- Configure `TILL_SYSTEM_API_URL` and `TILL_SYSTEM_API_KEY` when ready
+- Cards are automatically enabled when issued
+- Cards are automatically disabled when memberships expire
 
-1. Set `PIXL_PAY_API_URL` to the Pixl Pay API endpoint
-2. Set `PIXL_PAY_API_KEY` for authentication
-3. Set `PIXL_PAY_MERCHANT_ID` for the Masonic Hall Bar merchant account
+### Apple Wallet
+- Requires Apple Developer Program membership
+- Configure pass certificates and team ID for production use
+- QR code fallback always available
 
-The integration supports:
-- Card payments via Dojo
-- Open Banking payments
-- Webhook handling for payment status updates
+### Email Configuration
+- Configure SMTP settings for renewal reminders
+- Supports Gmail, SendGrid, Mailgun, or any SMTP provider
+- HTML templates included for renewal reminder and welcome emails
 
-### Till System Integration
+## Admin Dashboard
 
-The till system integration is prepared for the external access control system. When ready:
+Access the admin dashboard at `/admin` with sections for:
+- Dashboard overview with stats
+- Member management
+- Card number inventory
+- Subscription plan configuration
+- Membership list with filters
+- Physical card queue for bar manager
+- Settings and integration status
 
-1. Set `TILL_SYSTEM_API_URL` to the till system endpoint
-2. Set `TILL_SYSTEM_API_KEY` for authentication
-3. The system will automatically enable cards on activation and disable on expiry
+## Security Considerations
 
-### Apple Wallet Pass
-
-To enable Apple Wallet pass generation:
-
-1. Create a Pass Type ID in Apple Developer Portal
-2. Generate and export a signing certificate
-3. Configure the environment variables
-4. The system will generate `.pkpass` files for download
-
-## Magstripe Card Format
-
-Physical cards use Track 1 encoding with the format:
-
-```
-;9998{CARD_NUMBER}
-```
-
-Example for card number 1500:
-```
-;99981500
-```
-
-The prefix can be changed via the `MAGSTRIPE_PREFIX` environment variable.
+1. **Service Account**: Never commit service account keys to version control
+2. **Firestore Rules**: Review and customize `firestore.rules` for your security needs
+3. **CRON_SECRET**: Set a strong secret for cron job authentication
+4. **JWT_SECRET**: Use a strong, unique secret in production
+5. **HTTPS**: Always use HTTPS in production (Firebase Hosting provides this automatically)
 
 ## License
 

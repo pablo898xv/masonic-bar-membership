@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { 
+  cardIssuancesCollection, 
+  membershipsCollection, 
+  membershipNumbersCollection 
+} from '@/lib/db'
+import tillSystem from '@/lib/till-system'
 
-/**
- * Mark a card as issued to the member
- * 
- * This endpoint is called when the bar manager has handed over
- * the physical card to the member.
- */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -14,14 +13,9 @@ export async function POST(
   try {
     const { id } = await params
     const body = await request.json()
-    const { issuedBy, notes } = body
+    const { issuedBy, enableTillSystem = true } = body
     
-    const issuance = await prisma.cardIssuance.findUnique({
-      where: { id },
-      include: {
-        membership: true
-      }
-    })
+    const issuance = await cardIssuancesCollection.findById(id)
     
     if (!issuance) {
       return NextResponse.json({ error: 'Card issuance not found' }, { status: 404 })
@@ -29,39 +23,50 @@ export async function POST(
     
     if (issuance.queueStatus !== 'ENCODED') {
       return NextResponse.json(
-        { error: `Cannot issue card with status: ${issuance.queueStatus}. Card must be ENCODED first.` },
+        { error: 'Card must be encoded before issuing' },
         { status: 400 }
       )
     }
     
-    const [updatedIssuance] = await prisma.$transaction([
-      prisma.cardIssuance.update({
-        where: { id },
-        data: {
-          queueStatus: 'ISSUED',
-          issuedAt: new Date(),
-          issuedBy: issuedBy || null,
-          notes: notes || issuance.notes,
-        },
-        include: {
-          membership: {
-            include: {
-              member: true,
-              membershipNumber: true,
-              subscriptionPlan: true,
-            }
-          }
+    const membership = await membershipsCollection.findById(issuance.membershipId)
+    if (!membership) {
+      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    }
+    
+    const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
+    
+    await cardIssuancesCollection.update(id, {
+      queueStatus: 'ISSUED',
+      issuedAt: new Date(),
+      issuedBy: issuedBy || 'System'
+    })
+    
+    let tillSystemResult = null
+    if (enableTillSystem && membershipNumber) {
+      try {
+        tillSystemResult = await tillSystem.enableCard({
+          cardNumber: membershipNumber.cardNumber.toString(),
+          membershipId: membership.id,
+          expiryDate: membership.expiryDate!,
+          magstripeData: issuance.magstripeData!
+        })
+        
+        if (tillSystemResult.success) {
+          await membershipsCollection.update(membership.id, {
+            tillSystemEnabled: true,
+            tillSystemEnabledAt: new Date()
+          })
         }
-      }),
-      prisma.membership.update({
-        where: { id: issuance.membershipId },
-        data: { status: 'ACTIVE' }
-      })
-    ])
+      } catch (tillError) {
+        console.error('Till system enable failed:', tillError)
+      }
+    }
+    
+    const updatedIssuance = await cardIssuancesCollection.findById(id)
     
     return NextResponse.json({
       issuance: updatedIssuance,
-      message: 'Card issued to member successfully',
+      tillSystem: tillSystemResult
     })
   } catch (error) {
     console.error('Error issuing card:', error)

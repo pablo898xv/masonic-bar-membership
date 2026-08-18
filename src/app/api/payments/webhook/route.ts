@@ -1,106 +1,90 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
-import { pixlPay, WebhookPayload } from '@/lib/pixlpay'
-import { addYears } from 'date-fns'
+import { 
+  membershipsCollection, 
+  subscriptionPlansCollection,
+  cardIssuancesCollection,
+  paymentTransactionsCollection 
+} from '@/lib/db'
+import { pixlPay } from '@/lib/pixlpay'
 
 export async function POST(request: NextRequest) {
   try {
-    const rawBody = await request.text()
-    const signature = request.headers.get('X-Pixl-Signature') || ''
+    const body = await request.json()
+    const signature = request.headers.get('x-pixlpay-signature')
     
-    if (!pixlPay.verifyWebhookSignature(rawBody, signature)) {
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
+    if (!pixlPay.verifyWebhook(body, signature || '')) {
+      return NextResponse.json({ error: 'Invalid webhook signature' }, { status: 401 })
     }
     
-    const payload: WebhookPayload = JSON.parse(rawBody)
+    const { paymentId, status, metadata } = body
     
-    const { event, transactionId, reference } = payload
-    
-    const membershipId = reference.replace('MEMBERSHIP-', '')
-    
-    const membership = await prisma.membership.findUnique({
-      where: { id: membershipId },
-      include: { subscriptionPlan: true }
-    })
+    const membership = await membershipsCollection.findById(metadata?.membershipId)
     
     if (!membership) {
-      console.error(`Membership not found for transaction ${transactionId}`)
+      console.error('Membership not found for payment:', paymentId)
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
-    switch (event) {
-      case 'payment.completed':
-        const startDate = new Date()
-        const expiryDate = addYears(startDate, membership.subscriptionPlan.durationYears)
+    let paymentStatus: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'REFUNDED' = 'PENDING'
+    let membershipStatus = membership.status
+    
+    switch (status) {
+      case 'completed':
+      case 'success':
+        paymentStatus = 'COMPLETED'
+        membershipStatus = 'PAID'
+        break
+      case 'failed':
+      case 'declined':
+        paymentStatus = 'FAILED'
+        break
+      case 'refunded':
+        paymentStatus = 'REFUNDED'
+        membershipStatus = 'CANCELLED'
+        break
+      case 'processing':
+        paymentStatus = 'PROCESSING'
+        break
+    }
+    
+    await membershipsCollection.update(membership.id, {
+      paymentStatus,
+      status: membershipStatus as 'PENDING_PAYMENT' | 'PAID' | 'ACTIVE' | 'EXPIRED' | 'CANCELLED'
+    })
+    
+    await paymentTransactionsCollection.updateByExternalId(paymentId, {
+      status: paymentStatus
+    })
+    
+    if (paymentStatus === 'COMPLETED' && membershipStatus === 'PAID') {
+      const subscriptionPlan = await subscriptionPlansCollection.findById(membership.subscriptionPlanId)
+      
+      if (subscriptionPlan) {
+        const now = new Date()
+        const expiryDate = new Date(now)
+        expiryDate.setFullYear(expiryDate.getFullYear() + subscriptionPlan.durationYears)
         
-        await prisma.$transaction([
-          prisma.membership.update({
-            where: { id: membershipId },
-            data: {
-              paymentStatus: 'COMPLETED',
-              status: membership.cardType === 'QR_CODE' ? 'ACTIVE' : 'PAID',
-              startDate,
-              expiryDate,
-            }
-          }),
-          prisma.paymentTransaction.updateMany({
-            where: { externalId: transactionId },
-            data: { status: 'COMPLETED' }
-          }),
-          ...(membership.cardType === 'PHYSICAL_CARD' ? [
-            prisma.cardIssuance.updateMany({
-              where: { membershipId },
-              data: { queueStatus: 'READY_TO_ENCODE' }
+        await membershipsCollection.update(membership.id, {
+          status: 'ACTIVE',
+          startDate: now,
+          expiryDate
+        })
+        
+        if (membership.cardType === 'PHYSICAL_CARD') {
+          const cardIssuance = await cardIssuancesCollection.findByMembershipId(membership.id)
+          
+          if (cardIssuance) {
+            await cardIssuancesCollection.update(cardIssuance.id, {
+              queueStatus: 'READY_TO_ENCODE'
             })
-          ] : [])
-        ])
-        
-        console.log(`Payment completed for membership ${membershipId}`)
-        break
-        
-      case 'payment.failed':
-        await prisma.$transaction([
-          prisma.membership.update({
-            where: { id: membershipId },
-            data: {
-              paymentStatus: 'FAILED',
-              status: 'PENDING_PAYMENT'
-            }
-          }),
-          prisma.paymentTransaction.updateMany({
-            where: { externalId: transactionId },
-            data: { status: 'FAILED' }
-          })
-        ])
-        
-        console.log(`Payment failed for membership ${membershipId}`)
-        break
-        
-      case 'payment.refunded':
-        await prisma.$transaction([
-          prisma.membership.update({
-            where: { id: membershipId },
-            data: {
-              paymentStatus: 'REFUNDED',
-              status: 'CANCELLED'
-            }
-          }),
-          prisma.paymentTransaction.updateMany({
-            where: { externalId: transactionId },
-            data: { status: 'REFUNDED' }
-          })
-        ])
-        
-        console.log(`Payment refunded for membership ${membershipId}`)
-        break
-        
-      default:
-        console.log(`Unknown webhook event: ${event}`)
+          }
+        }
+      }
     }
     
     return NextResponse.json({ received: true })
   } catch (error) {
-    console.error('Webhook processing error:', error)
+    console.error('Error processing payment webhook:', error)
     return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 })
   }
 }

@@ -1,85 +1,84 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { 
+  membershipsCollection, 
+  membersCollection, 
+  subscriptionPlansCollection,
+  paymentTransactionsCollection 
+} from '@/lib/db'
 import { pixlPay } from '@/lib/pixlpay'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { membershipId } = body
+    const { membershipId, returnUrl } = body
     
     if (!membershipId) {
       return NextResponse.json({ error: 'Membership ID is required' }, { status: 400 })
     }
     
-    const membership = await prisma.membership.findUnique({
-      where: { id: membershipId },
-      include: {
-        member: true,
-        subscriptionPlan: true,
-      }
-    })
+    const membership = await membershipsCollection.findById(membershipId)
     
     if (!membership) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
-    if (membership.paymentStatus === 'COMPLETED') {
-      return NextResponse.json({ error: 'Payment already completed' }, { status: 400 })
+    if (membership.status !== 'PENDING_PAYMENT') {
+      return NextResponse.json(
+        { error: 'Payment already processed or membership not in pending state' },
+        { status: 400 }
+      )
     }
     
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-    
-    const paymentResponse = await pixlPay.initiatePayment({
-      amount: membership.subscriptionPlan.price,
-      currency: membership.subscriptionPlan.currency,
-      paymentMethod: membership.paymentMethod as 'CARD' | 'OPEN_BANKING',
-      reference: `MEMBERSHIP-${membership.id}`,
-      description: `Masonic Hall Bar Membership - ${membership.subscriptionPlan.name}`,
-      customerEmail: membership.member.email,
-      customerName: membership.member.name,
-      metadata: {
-        membershipId: membership.id,
-        memberId: membership.memberId,
-        cardType: membership.cardType,
-      },
-      returnUrl: `${appUrl}/membership/payment-complete?membershipId=${membership.id}`,
-      webhookUrl: `${appUrl}/api/payments/webhook`,
-    })
-    
-    if (!paymentResponse.success) {
-      return NextResponse.json({
-        error: paymentResponse.error || 'Failed to initiate payment'
-      }, { status: 500 })
-    }
-    
-    await prisma.$transaction([
-      prisma.membership.update({
-        where: { id: membershipId },
-        data: {
-          paymentId: paymentResponse.transactionId,
-          paymentStatus: 'PROCESSING',
-        }
-      }),
-      prisma.paymentTransaction.create({
-        data: {
-          membershipId,
-          amount: membership.subscriptionPlan.price,
-          currency: membership.subscriptionPlan.currency,
-          paymentMethod: membership.paymentMethod || 'CARD',
-          provider: 'PIXL_PAY',
-          externalId: paymentResponse.transactionId,
-          status: 'PROCESSING',
-          metadata: JSON.stringify({
-            subscriptionPlanId: membership.subscriptionPlanId,
-            cardType: membership.cardType,
-          })
-        }
-      })
+    const [member, subscriptionPlan] = await Promise.all([
+      membersCollection.findById(membership.memberId),
+      subscriptionPlansCollection.findById(membership.subscriptionPlanId),
     ])
     
+    if (!member || !subscriptionPlan) {
+      return NextResponse.json({ error: 'Related data not found' }, { status: 404 })
+    }
+    
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+    const webhookUrl = `${baseUrl}/api/payments/webhook`
+    const successUrl = returnUrl || `${baseUrl}/membership/payment-complete?membershipId=${membershipId}`
+    
+    const paymentResult = await pixlPay.initiatePayment({
+      amount: subscriptionPlan.price,
+      currency: subscriptionPlan.currency,
+      paymentMethod: membership.paymentMethod || 'CARD',
+      reference: membershipId,
+      description: `Membership: ${subscriptionPlan.name} for ${member.name}`,
+      customerEmail: member.email,
+      webhookUrl,
+      successUrl,
+      cancelUrl: `${baseUrl}/membership/register?cancelled=true`,
+      metadata: {
+        membershipId,
+        memberId: member.id,
+        planId: subscriptionPlan.id,
+      }
+    })
+    
+    await paymentTransactionsCollection.create({
+      membershipId,
+      amount: subscriptionPlan.price,
+      currency: subscriptionPlan.currency,
+      paymentMethod: membership.paymentMethod || 'CARD',
+      provider: 'PIXL_PAY',
+      externalId: paymentResult.paymentId,
+      status: 'PENDING',
+      metadata: paymentResult.metadata
+    })
+    
+    await membershipsCollection.update(membershipId, {
+      paymentId: paymentResult.paymentId,
+      paymentStatus: 'PROCESSING'
+    })
+    
     return NextResponse.json({
-      redirectUrl: paymentResponse.redirectUrl,
-      transactionId: paymentResponse.transactionId,
+      paymentId: paymentResult.paymentId,
+      paymentUrl: paymentResult.paymentUrl,
+      expiresAt: paymentResult.expiresAt
     })
   } catch (error) {
     console.error('Error initiating payment:', error)
@@ -88,30 +87,38 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const membershipId = searchParams.get('membershipId')
-  
-  if (!membershipId) {
-    return NextResponse.json({ error: 'Membership ID is required' }, { status: 400 })
-  }
-  
-  const membership = await prisma.membership.findUnique({
-    where: { id: membershipId },
-    include: {
-      member: true,
-      subscriptionPlan: true,
+  try {
+    const { searchParams } = new URL(request.url)
+    const membershipId = searchParams.get('membershipId')
+    
+    if (!membershipId) {
+      return NextResponse.json({ error: 'Membership ID is required' }, { status: 400 })
     }
-  })
-  
-  if (!membership) {
-    return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    
+    const membership = await membershipsCollection.findById(membershipId)
+    
+    if (!membership) {
+      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    }
+    
+    if (!membership.paymentId) {
+      return NextResponse.json({ error: 'No payment initiated for this membership' }, { status: 404 })
+    }
+    
+    const paymentStatus = await pixlPay.getPaymentStatus(membership.paymentId)
+    
+    if (!paymentStatus) {
+      return NextResponse.json({ error: 'Could not retrieve payment status' }, { status: 500 })
+    }
+    
+    return NextResponse.json({
+      membershipId,
+      paymentId: membership.paymentId,
+      status: paymentStatus.status,
+      paymentMethod: membership.paymentMethod
+    })
+  } catch (error) {
+    console.error('Error fetching payment status:', error)
+    return NextResponse.json({ error: 'Failed to fetch payment status' }, { status: 500 })
   }
-  
-  return NextResponse.json({
-    membershipId: membership.id,
-    amount: membership.subscriptionPlan.price,
-    currency: membership.subscriptionPlan.currency,
-    paymentMethod: membership.paymentMethod,
-    status: membership.paymentStatus,
-  })
 }

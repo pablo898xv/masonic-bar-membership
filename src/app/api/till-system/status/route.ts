@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
-import { tillSystem } from '@/lib/till-system'
+import { membershipsCollection, membershipNumbersCollection } from '@/lib/db'
+import tillSystem from '@/lib/till-system'
 
-/**
- * Check the status of a card in the till system
- */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
@@ -14,34 +11,32 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Membership ID is required' }, { status: 400 })
     }
     
-    const membership = await prisma.membership.findUnique({
-      where: { id: membershipId },
-      include: {
-        membershipNumber: true,
-        member: true,
-      }
-    })
+    const membership = await membershipsCollection.findById(membershipId)
     
     if (!membership) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
-    const magstripePrefix = process.env.MAGSTRIPE_PREFIX || ';9998'
-    const cardNumber = `${magstripePrefix}${membership.membershipNumber.cardNumber}`
+    const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
     
-    const result = await tillSystem.getCardStatus(cardNumber)
+    if (!membershipNumber) {
+      return NextResponse.json({ error: 'Membership number not found' }, { status: 404 })
+    }
+    
+    const result = await tillSystem.getCardStatus(membershipNumber.cardNumber.toString())
     
     return NextResponse.json({
       membershipId,
-      cardNumber,
-      membershipStatus: membership.status,
-      tillSystemEnabled: membership.tillSystemEnabled,
-      tillSystemStatus: result.success ? result.status : 'UNKNOWN',
-      tillSystemConfigured: tillSystem.isConfigured(),
-      error: result.success ? null : result.error,
+      cardNumber: membershipNumber.cardNumber,
+      localStatus: {
+        tillSystemEnabled: membership.tillSystemEnabled,
+        tillSystemEnabledAt: membership.tillSystemEnabledAt
+      },
+      remoteStatus: result.success ? result.data : null,
+      error: result.success ? null : result.message
     })
   } catch (error) {
     console.error('Error checking till system status:', error)
-    return NextResponse.json({ error: 'Failed to check status' }, { status: 500 })
+    return NextResponse.json({ error: 'Failed to check till system status' }, { status: 500 })
   }
 }

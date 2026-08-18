@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { subscriptionPlansCollection } from '@/lib/db'
 import { subscriptionPlanSchema } from '@/lib/validation'
 
 export async function GET(request: NextRequest) {
@@ -7,12 +7,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const activeOnly = searchParams.get('active') === 'true'
     
-    const where = activeOnly ? { isActive: true } : {}
-    
-    const plans = await prisma.subscriptionPlan.findMany({
-      where,
-      orderBy: { durationYears: 'asc' }
-    })
+    const plans = await subscriptionPlansCollection.findMany(activeOnly)
     
     return NextResponse.json(plans)
   } catch (error) {
@@ -33,9 +28,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const plan = await prisma.subscriptionPlan.create({
-      data: validation.data
-    })
+    const plan = await subscriptionPlansCollection.create(validation.data)
     
     return NextResponse.json(plan, { status: 201 })
   } catch (error) {

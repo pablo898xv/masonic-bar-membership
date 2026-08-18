@@ -1,6 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
-import { addYears } from 'date-fns'
+import { 
+  membershipsCollection, 
+  membersCollection, 
+  membershipNumbersCollection, 
+  subscriptionPlansCollection,
+  cardIssuancesCollection,
+  Membership
+} from '@/lib/db'
+
+const MAGSTRIPE_PREFIX = process.env.MAGSTRIPE_PREFIX || ';9998'
 
 export async function POST(
   request: NextRequest,
@@ -11,72 +19,74 @@ export async function POST(
     const body = await request.json()
     const { subscriptionPlanId, paymentMethod } = body
     
-    const existingMembership = await prisma.membership.findUnique({
-      where: { id },
-      include: {
-        member: true,
-        membershipNumber: true,
-        subscriptionPlan: true,
-      }
-    })
+    const existingMembership = await membershipsCollection.findById(id)
     
     if (!existingMembership) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
-    if (existingMembership.status !== 'ACTIVE' && existingMembership.status !== 'EXPIRED') {
+    if (!['ACTIVE', 'EXPIRED'].includes(existingMembership.status)) {
       return NextResponse.json(
-        { error: 'Can only renew ACTIVE or EXPIRED memberships' },
+        { error: 'Only active or expired memberships can be renewed' },
         { status: 400 }
       )
     }
     
-    const plan = subscriptionPlanId
-      ? await prisma.subscriptionPlan.findUnique({ where: { id: subscriptionPlanId } })
-      : existingMembership.subscriptionPlan
+    const [member, subscriptionPlan, membershipNumber] = await Promise.all([
+      membersCollection.findById(existingMembership.memberId),
+      subscriptionPlansCollection.findById(subscriptionPlanId),
+      membershipNumbersCollection.findById(existingMembership.membershipNumberId),
+    ])
     
-    if (!plan || !plan.isActive) {
+    if (!member) {
+      return NextResponse.json({ error: 'Member not found' }, { status: 404 })
+    }
+    
+    if (!subscriptionPlan || !subscriptionPlan.isActive) {
       return NextResponse.json({ error: 'Subscription plan not found or inactive' }, { status: 404 })
     }
     
-    const newStartDate = existingMembership.expiryDate && 
-                         new Date(existingMembership.expiryDate) > new Date()
-      ? new Date(existingMembership.expiryDate)
-      : new Date()
+    if (!membershipNumber) {
+      return NextResponse.json({ error: 'Membership number not found' }, { status: 404 })
+    }
     
-    const newExpiryDate = addYears(newStartDate, plan.durationYears)
+    const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
+      memberId: existingMembership.memberId,
+      membershipNumberId: existingMembership.membershipNumberId,
+      subscriptionPlanId,
+      cardType: existingMembership.cardType,
+      status: 'PENDING_PAYMENT',
+      paymentMethod: paymentMethod || existingMembership.paymentMethod,
+      paymentStatus: 'PENDING',
+      tillSystemEnabled: false,
+    }
     
-    const renewal = await prisma.membership.create({
-      data: {
-        memberId: existingMembership.memberId,
-        membershipNumberId: existingMembership.membershipNumberId,
-        subscriptionPlanId: plan.id,
-        cardType: existingMembership.cardType,
-        status: 'PENDING_PAYMENT',
-        paymentMethod: paymentMethod || existingMembership.paymentMethod,
-        paymentStatus: 'PENDING',
-      },
-      include: {
-        member: true,
-        membershipNumber: true,
-        subscriptionPlan: true,
-      }
-    })
+    const newMembership = await membershipsCollection.create(membershipData)
+    
+    if (existingMembership.cardType === 'PHYSICAL_CARD') {
+      const magstripeData = `${MAGSTRIPE_PREFIX}${membershipNumber.cardNumber}`
+      
+      await cardIssuancesCollection.create({
+        membershipId: newMembership.id,
+        queueStatus: 'PENDING',
+        magstripeData,
+        notes: `Renewal of membership ${existingMembership.id}`
+      })
+    }
+    
+    const result = await membershipsCollection.findByIdWithRelations(newMembership.id)
     
     return NextResponse.json({
-      renewal,
-      payment: {
-        amount: plan.price,
-        currency: plan.currency,
-        paymentMethod: paymentMethod || existingMembership.paymentMethod,
-        redirectUrl: `/api/payments/initiate?membershipId=${renewal.id}`
-      },
-      message: 'Renewal membership created. Complete payment to activate.',
-      previousExpiry: existingMembership.expiryDate,
-      newExpiry: newExpiryDate.toISOString(),
+      ...result,
+      previousMembershipId: existingMembership.id,
+      paymentRequired: {
+        amount: subscriptionPlan.price,
+        currency: subscriptionPlan.currency,
+        membershipId: newMembership.id
+      }
     }, { status: 201 })
   } catch (error) {
-    console.error('Error creating renewal:', error)
-    return NextResponse.json({ error: 'Failed to create renewal' }, { status: 500 })
+    console.error('Error renewing membership:', error)
+    return NextResponse.json({ error: 'Failed to renew membership' }, { status: 500 })
   }
 }

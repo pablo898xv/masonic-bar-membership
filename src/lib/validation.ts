@@ -17,8 +17,8 @@ export const subscriptionPlanSchema = z.object({
 })
 
 export const membershipPurchaseSchema = z.object({
-  memberId: z.string().uuid('Invalid member ID'),
-  subscriptionPlanId: z.string().uuid('Invalid subscription plan ID'),
+  memberId: z.string().min(1, 'Member ID is required'),
+  subscriptionPlanId: z.string().min(1, 'Subscription plan ID is required'),
   cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD']),
   paymentMethod: z.enum(['CARD', 'OPEN_BANKING']),
 })

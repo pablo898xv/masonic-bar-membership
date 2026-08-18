@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 import { NextRequest } from 'next/server'
-import prisma from './prisma'
+import { adminUsersCollection } from './db'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-in-production'
 
@@ -45,16 +45,14 @@ export async function getAuthenticatedUser(request: NextRequest) {
     return null
   }
   
-  const user = await prisma.adminUser.findUnique({
-    where: { id: payload.userId },
-    select: { id: true, email: true, name: true, role: true, isActive: true }
-  })
+  const user = await adminUsersCollection.findById(payload.userId)
   
   if (!user || !user.isActive) {
     return null
   }
   
-  return user
+  const { passwordHash: _, ...userWithoutPassword } = user
+  return userWithoutPassword
 }
 
 export function requireAuth(roles?: string[]) {

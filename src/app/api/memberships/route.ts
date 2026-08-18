@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { 
+  membershipsCollection, 
+  membersCollection, 
+  membershipNumbersCollection, 
+  subscriptionPlansCollection,
+  cardIssuancesCollection,
+  Membership
+} from '@/lib/db'
 import { membershipPurchaseSchema } from '@/lib/validation'
-import { addYears } from 'date-fns'
 
 const MAGSTRIPE_PREFIX = process.env.MAGSTRIPE_PREFIX || ';9998'
 
@@ -10,35 +16,29 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
-    const status = searchParams.get('status')
-    const cardType = searchParams.get('cardType')
-    const memberId = searchParams.get('memberId')
+    const status = searchParams.get('status') || undefined
+    const cardType = searchParams.get('cardType') || undefined
     
-    const skip = (page - 1) * limit
+    const { memberships, total } = await membershipsCollection.findMany({
+      status,
+      cardType,
+      take: limit,
+    })
     
-    const where: Record<string, unknown> = {}
-    if (status) where.status = status
-    if (cardType) where.cardType = cardType
-    if (memberId) where.memberId = memberId
-    
-    const [memberships, total] = await Promise.all([
-      prisma.membership.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          member: true,
-          membershipNumber: true,
-          subscriptionPlan: true,
-          cardIssuance: true,
-        }
-      }),
-      prisma.membership.count({ where })
-    ])
+    const membershipsWithDetails = await Promise.all(
+      memberships.map(async (m) => {
+        const [member, membershipNumber, subscriptionPlan, cardIssuance] = await Promise.all([
+          membersCollection.findById(m.memberId),
+          membershipNumbersCollection.findById(m.membershipNumberId),
+          subscriptionPlansCollection.findById(m.subscriptionPlanId),
+          cardIssuancesCollection.findByMembershipId(m.id),
+        ])
+        return { ...m, member, membershipNumber, subscriptionPlan, cardIssuance }
+      })
+    )
     
     return NextResponse.json({
-      memberships,
+      memberships: membershipsWithDetails,
       pagination: {
         page,
         limit,
@@ -66,88 +66,64 @@ export async function POST(request: NextRequest) {
     
     const { memberId, subscriptionPlanId, cardType, paymentMethod } = validation.data
     
-    const [member, plan, availableNumber] = await Promise.all([
-      prisma.member.findUnique({ where: { id: memberId } }),
-      prisma.subscriptionPlan.findUnique({ where: { id: subscriptionPlanId } }),
-      prisma.membershipNumber.findFirst({
-        where: { isAssigned: false },
-        orderBy: { cardNumber: 'asc' }
-      })
+    const [member, subscriptionPlan] = await Promise.all([
+      membersCollection.findById(memberId),
+      subscriptionPlansCollection.findById(subscriptionPlanId),
     ])
     
     if (!member) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
-    if (!plan || !plan.isActive) {
+    if (!subscriptionPlan || !subscriptionPlan.isActive) {
       return NextResponse.json({ error: 'Subscription plan not found or inactive' }, { status: 404 })
     }
     
+    const availableNumber = await membershipNumbersCollection.findFirstAvailable()
+    
     if (!availableNumber) {
       return NextResponse.json(
-        { error: 'No available card numbers. Please import more numbers.' },
+        { error: 'No card numbers available. Please import more numbers.' },
         { status: 400 }
       )
     }
     
-    const membership = await prisma.$transaction(async (tx) => {
-      await tx.membershipNumber.update({
-        where: { id: availableNumber.id },
-        data: {
-          isAssigned: true,
-          assignedAt: new Date()
-        }
-      })
-      
-      const newMembership = await tx.membership.create({
-        data: {
-          memberId,
-          membershipNumberId: availableNumber.id,
-          subscriptionPlanId,
-          cardType,
-          paymentMethod,
-          status: 'PENDING_PAYMENT',
-          paymentStatus: 'PENDING'
-        },
-        include: {
-          member: true,
-          membershipNumber: true,
-          subscriptionPlan: true,
-        }
-      })
-      
-      if (cardType === 'PHYSICAL_CARD') {
-        const magstripeData = `${MAGSTRIPE_PREFIX}${availableNumber.cardNumber}`
-        
-        await tx.cardIssuance.create({
-          data: {
-            membershipId: newMembership.id,
-            magstripeData,
-            queueStatus: 'PENDING'
-          }
-        })
-      }
-      
-      return newMembership
+    await membershipNumbersCollection.update(availableNumber.id, {
+      isAssigned: true,
+      assignedAt: new Date()
     })
     
-    const membershipWithIssuance = await prisma.membership.findUnique({
-      where: { id: membership.id },
-      include: {
-        member: true,
-        membershipNumber: true,
-        subscriptionPlan: true,
-        cardIssuance: true,
-      }
-    })
+    const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
+      memberId,
+      membershipNumberId: availableNumber.id,
+      subscriptionPlanId,
+      cardType: cardType as 'QR_CODE' | 'PHYSICAL_CARD',
+      status: 'PENDING_PAYMENT',
+      paymentMethod: paymentMethod as 'CARD' | 'OPEN_BANKING',
+      paymentStatus: 'PENDING',
+      tillSystemEnabled: false,
+    }
+    
+    const membership = await membershipsCollection.create(membershipData)
+    
+    if (cardType === 'PHYSICAL_CARD') {
+      const magstripeData = `${MAGSTRIPE_PREFIX}${availableNumber.cardNumber}`
+      
+      await cardIssuancesCollection.create({
+        membershipId: membership.id,
+        queueStatus: 'PENDING',
+        magstripeData,
+      })
+    }
+    
+    const result = await membershipsCollection.findByIdWithRelations(membership.id)
     
     return NextResponse.json({
-      membership: membershipWithIssuance,
-      payment: {
-        amount: plan.price,
-        currency: plan.currency,
-        paymentMethod,
-        redirectUrl: `/api/payments/initiate?membershipId=${membership.id}`
+      ...result,
+      paymentRequired: {
+        amount: subscriptionPlan.price,
+        currency: subscriptionPlan.currency,
+        membershipId: membership.id
       }
     }, { status: 201 })
   } catch (error) {

@@ -1,53 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
-import { addDays } from 'date-fns'
+import { 
+  membershipsCollection, 
+  membersCollection, 
+  membershipNumbersCollection, 
+  subscriptionPlansCollection 
+} from '@/lib/db'
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url)
-    const daysAhead = parseInt(searchParams.get('days') || '30')
+    const days = parseInt(searchParams.get('days') || '30')
+    const includeExpired = searchParams.get('includeExpired') === 'true'
     
-    const now = new Date()
-    const futureDate = addDays(now, daysAhead)
+    let memberships = await membershipsCollection.findExpiring(days)
     
-    const expiringMemberships = await prisma.membership.findMany({
-      where: {
-        status: 'ACTIVE',
-        expiryDate: {
-          gte: now,
-          lte: futureDate
+    if (includeExpired) {
+      const expiredMemberships = await membershipsCollection.findExpired()
+      memberships = [...expiredMemberships, ...memberships]
+    }
+    
+    const membershipsWithDetails = await Promise.all(
+      memberships.map(async (m) => {
+        const [member, membershipNumber, subscriptionPlan] = await Promise.all([
+          membersCollection.findById(m.memberId),
+          membershipNumbersCollection.findById(m.membershipNumberId),
+          subscriptionPlansCollection.findById(m.subscriptionPlanId),
+        ])
+        
+        const daysUntilExpiry = m.expiryDate 
+          ? Math.ceil((m.expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+          : null
+        
+        return {
+          ...m,
+          member,
+          membershipNumber,
+          subscriptionPlan,
+          daysUntilExpiry,
+          isExpired: daysUntilExpiry !== null && daysUntilExpiry < 0
         }
-      },
-      orderBy: { expiryDate: 'asc' },
-      include: {
-        member: true,
-        membershipNumber: true,
-        subscriptionPlan: true,
-      }
-    })
-    
-    const expiredMemberships = await prisma.membership.findMany({
-      where: {
-        status: 'ACTIVE',
-        expiryDate: {
-          lt: now
-        }
-      },
-      orderBy: { expiryDate: 'asc' },
-      include: {
-        member: true,
-        membershipNumber: true,
-        subscriptionPlan: true,
-      }
-    })
+      })
+    )
     
     return NextResponse.json({
-      expiring: expiringMemberships,
-      expired: expiredMemberships,
-      summary: {
-        expiringCount: expiringMemberships.length,
-        expiredCount: expiredMemberships.length,
-        daysAhead
+      memberships: membershipsWithDetails,
+      total: membershipsWithDetails.length,
+      criteria: {
+        days,
+        includeExpired
       }
     })
   } catch (error) {

@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Members collection - readable by authenticated admins only
+    match /members/{memberId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Membership numbers - admin only
+    match /membershipNumbers/{numberId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Subscription plans - readable by all, writable by admins
+    match /subscriptionPlans/{planId} {
+      allow read: if true;
+      allow write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Memberships - admin only
+    match /memberships/{membershipId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Card issuances - admin only
+    match /cardIssuances/{issuanceId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Wallet passes - admin only
+    match /walletPasses/{passId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Payment transactions - admin only
+    match /paymentTransactions/{transactionId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // System config - admin only
+    match /systemConfig/{configId} {
+      allow read, write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid));
+    }
+    
+    // Admin users - only readable by authenticated admins
+    match /adminUsers/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && 
+        exists(/databases/$(database)/documents/adminUsers/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/adminUsers/$(request.auth.uid)).data.role == 'ADMIN';
+    }
+  }
+}

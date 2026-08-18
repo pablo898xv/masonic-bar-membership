@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { adminUsersCollection } from '@/lib/db'
 import { hashPassword, generateToken } from '@/lib/auth'
 import { adminCreateSchema } from '@/lib/validation'
 
@@ -17,9 +17,7 @@ export async function POST(request: NextRequest) {
     
     const { email, password, name, role } = validation.data
     
-    const existingUser = await prisma.adminUser.findUnique({
-      where: { email }
-    })
+    const existingUser = await adminUsersCollection.findByEmail(email)
     
     if (existingUser) {
       return NextResponse.json(
@@ -28,38 +26,38 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const adminCount = await prisma.adminUser.count()
-    const isFirstAdmin = adminCount === 0
+    const userCount = await adminUsersCollection.count()
+    if (userCount > 0) {
+      return NextResponse.json(
+        { error: 'Registration is closed. Please contact an existing admin.' },
+        { status: 403 }
+      )
+    }
     
     const passwordHash = await hashPassword(password)
     
-    const user = await prisma.adminUser.create({
-      data: {
-        email,
-        passwordHash,
-        name,
-        role: isFirstAdmin ? 'ADMIN' : role,
-      }
+    const user = await adminUsersCollection.create({
+      email,
+      passwordHash,
+      name,
+      role: role || 'ADMIN',
+      isActive: true
     })
     
     const token = generateToken({
       userId: user.id,
       email: user.email,
-      role: user.role,
+      role: user.role
     })
     
+    const { passwordHash: _, ...userWithoutPassword } = user
+    
     return NextResponse.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      },
-      isFirstAdmin,
+      user: userWithoutPassword,
+      token
     }, { status: 201 })
   } catch (error) {
-    console.error('Registration error:', error)
+    console.error('Error during registration:', error)
     return NextResponse.json({ error: 'Registration failed' }, { status: 500 })
   }
 }

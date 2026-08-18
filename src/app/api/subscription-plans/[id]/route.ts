@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { subscriptionPlansCollection, membershipsCollection } from '@/lib/db'
 import { subscriptionPlanSchema } from '@/lib/validation'
 
 export async function GET(
@@ -9,9 +9,7 @@ export async function GET(
   try {
     const { id } = await params
     
-    const plan = await prisma.subscriptionPlan.findUnique({
-      where: { id }
-    })
+    const plan = await subscriptionPlansCollection.findById(id)
     
     if (!plan) {
       return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
@@ -40,15 +38,12 @@ export async function PATCH(
       )
     }
     
-    const existingPlan = await prisma.subscriptionPlan.findUnique({ where: { id } })
+    const existingPlan = await subscriptionPlansCollection.findById(id)
     if (!existingPlan) {
       return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
     }
     
-    const plan = await prisma.subscriptionPlan.update({
-      where: { id },
-      data: validation.data
-    })
+    const plan = await subscriptionPlansCollection.update(id, validation.data)
     
     return NextResponse.json(plan)
   } catch (error) {
@@ -64,24 +59,21 @@ export async function DELETE(
   try {
     const { id } = await params
     
-    const plan = await prisma.subscriptionPlan.findUnique({
-      where: { id },
-      include: { memberships: { take: 1 } }
-    })
+    const plan = await subscriptionPlansCollection.findById(id)
     
     if (!plan) {
       return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
     }
     
-    if (plan.memberships.length > 0) {
-      await prisma.subscriptionPlan.update({
-        where: { id },
-        data: { isActive: false }
-      })
+    const { memberships } = await membershipsCollection.findMany({ take: 1 })
+    const hasMemberships = memberships.some(m => m.subscriptionPlanId === id)
+    
+    if (hasMemberships) {
+      await subscriptionPlansCollection.update(id, { isActive: false })
       return NextResponse.json({ message: 'Subscription plan deactivated (has existing memberships)' })
     }
     
-    await prisma.subscriptionPlan.delete({ where: { id } })
+    await subscriptionPlansCollection.delete(id)
     
     return NextResponse.json({ message: 'Subscription plan deleted successfully' })
   } catch (error) {

@@ -1,12 +1,9 @@
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { membershipNumbersCollection } from '@/lib/db'
 
 export async function GET() {
   try {
-    const availableNumber = await prisma.membershipNumber.findFirst({
-      where: { isAssigned: false },
-      orderBy: { cardNumber: 'asc' }
-    })
+    const availableNumber = await membershipNumbersCollection.findFirstAvailable()
     
     if (!availableNumber) {
       return NextResponse.json(
@@ -15,9 +12,7 @@ export async function GET() {
       )
     }
     
-    const totalAvailable = await prisma.membershipNumber.count({
-      where: { isAssigned: false }
-    })
+    const totalAvailable = await membershipNumbersCollection.countAvailable()
     
     return NextResponse.json({
       nextAvailable: availableNumber,

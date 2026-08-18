@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { 
+  cardIssuancesCollection, 
+  membershipsCollection, 
+  membersCollection, 
+  membershipNumbersCollection 
+} from '@/lib/db'
 import { cardIssuanceUpdateSchema } from '@/lib/validation'
 
 export async function GET(
@@ -9,24 +14,23 @@ export async function GET(
   try {
     const { id } = await params
     
-    const issuance = await prisma.cardIssuance.findUnique({
-      where: { id },
-      include: {
-        membership: {
-          include: {
-            member: true,
-            membershipNumber: true,
-            subscriptionPlan: true,
-          }
-        }
-      }
-    })
+    const issuance = await cardIssuancesCollection.findById(id)
     
     if (!issuance) {
       return NextResponse.json({ error: 'Card issuance not found' }, { status: 404 })
     }
     
-    return NextResponse.json(issuance)
+    const membership = await membershipsCollection.findById(issuance.membershipId)
+    if (!membership) {
+      return NextResponse.json({ error: 'Related membership not found' }, { status: 404 })
+    }
+    
+    const [member, membershipNumber] = await Promise.all([
+      membersCollection.findById(membership.memberId),
+      membershipNumbersCollection.findById(membership.membershipNumberId),
+    ])
+    
+    return NextResponse.json({ ...issuance, membership, member, membershipNumber })
   } catch (error) {
     console.error('Error fetching card issuance:', error)
     return NextResponse.json({ error: 'Failed to fetch card issuance' }, { status: 500 })
@@ -49,51 +53,12 @@ export async function PATCH(
       )
     }
     
-    const existingIssuance = await prisma.cardIssuance.findUnique({ 
-      where: { id },
-      include: { membership: true }
-    })
-    
+    const existingIssuance = await cardIssuancesCollection.findById(id)
     if (!existingIssuance) {
       return NextResponse.json({ error: 'Card issuance not found' }, { status: 404 })
     }
     
-    const updateData: Record<string, unknown> = {
-      queueStatus: validation.data.queueStatus,
-    }
-    
-    if (validation.data.notes !== undefined) {
-      updateData.notes = validation.data.notes
-    }
-    
-    if (validation.data.queueStatus === 'ENCODED' && !existingIssuance.encodedAt) {
-      updateData.encodedAt = new Date()
-    }
-    
-    if (validation.data.queueStatus === 'ISSUED' && !existingIssuance.issuedAt) {
-      updateData.issuedAt = new Date()
-    }
-    
-    const issuance = await prisma.cardIssuance.update({
-      where: { id },
-      data: updateData,
-      include: {
-        membership: {
-          include: {
-            member: true,
-            membershipNumber: true,
-            subscriptionPlan: true,
-          }
-        }
-      }
-    })
-    
-    if (validation.data.queueStatus === 'ISSUED') {
-      await prisma.membership.update({
-        where: { id: existingIssuance.membershipId },
-        data: { status: 'ACTIVE' }
-      })
-    }
+    const issuance = await cardIssuancesCollection.update(id, validation.data)
     
     return NextResponse.json(issuance)
   } catch (error) {

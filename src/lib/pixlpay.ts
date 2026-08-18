@@ -17,18 +17,19 @@ export interface PaymentRequest {
   reference: string
   description: string
   customerEmail: string
-  customerName: string
-  metadata?: Record<string, string>
-  returnUrl: string
   webhookUrl: string
+  successUrl: string
+  cancelUrl: string
+  metadata?: Record<string, unknown>
 }
 
 export interface PaymentResponse {
   success: boolean
-  transactionId?: string
-  redirectUrl?: string
+  paymentId: string
+  paymentUrl: string
+  expiresAt?: string
+  metadata?: Record<string, unknown>
   error?: string
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
 }
 
 export interface PaymentStatus {
@@ -38,7 +39,7 @@ export interface PaymentStatus {
   currency: string
   paidAt?: string
   refundedAt?: string
-  metadata?: Record<string, string>
+  metadata?: Record<string, unknown>
 }
 
 export interface WebhookPayload {
@@ -55,11 +56,13 @@ class PixlPayClient {
   private baseUrl: string
   private apiKey: string
   private merchantId: string
+  private webhookSecret: string
 
   constructor() {
     this.baseUrl = process.env.PIXL_PAY_API_URL || ''
     this.apiKey = process.env.PIXL_PAY_API_KEY || ''
     this.merchantId = process.env.PIXL_PAY_MERCHANT_ID || ''
+    this.webhookSecret = process.env.PIXL_PAY_WEBHOOK_SECRET || ''
   }
 
   private get headers() {
@@ -71,13 +74,20 @@ class PixlPayClient {
   }
 
   /**
+   * Check if Pixl Pay is configured
+   */
+  isConfigured(): boolean {
+    return !!(this.baseUrl && this.apiKey)
+  }
+
+  /**
    * Initiate a payment through Pixl Pay
    * 
    * For card payments, this will redirect to Dojo's payment page
    * For open banking, this will redirect to the bank selection page
    */
   async initiatePayment(request: PaymentRequest): Promise<PaymentResponse> {
-    if (!this.baseUrl || !this.apiKey) {
+    if (!this.isConfigured()) {
       console.warn('Pixl Pay not configured, returning mock response')
       return this.mockInitiatePayment(request)
     }
@@ -87,17 +97,15 @@ class PixlPayClient {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify({
-          amount: Math.round(request.amount * 100),
+          amount: request.amount,
           currency: request.currency,
           payment_method: request.paymentMethod.toLowerCase().replace('_', '-'),
           reference: request.reference,
           description: request.description,
-          customer: {
-            email: request.customerEmail,
-            name: request.customerName,
-          },
+          customer_email: request.customerEmail,
           metadata: request.metadata,
-          return_url: request.returnUrl,
+          success_url: request.successUrl,
+          cancel_url: request.cancelUrl,
           webhook_url: request.webhookUrl,
         }),
       })
@@ -106,24 +114,27 @@ class PixlPayClient {
         const error = await response.json()
         return {
           success: false,
+          paymentId: '',
+          paymentUrl: '',
           error: error.message || 'Payment initiation failed',
-          status: 'FAILED',
         }
       }
 
       const data = await response.json()
       return {
         success: true,
-        transactionId: data.transaction_id,
-        redirectUrl: data.redirect_url,
-        status: 'PENDING',
+        paymentId: data.payment_id || data.transaction_id,
+        paymentUrl: data.payment_url || data.redirect_url,
+        expiresAt: data.expires_at,
+        metadata: request.metadata,
       }
     } catch (error) {
       console.error('Pixl Pay API error:', error)
       return {
         success: false,
+        paymentId: '',
+        paymentUrl: '',
         error: 'Failed to connect to payment provider',
-        status: 'FAILED',
       }
     }
   }
@@ -131,14 +142,14 @@ class PixlPayClient {
   /**
    * Check the status of a payment
    */
-  async getPaymentStatus(transactionId: string): Promise<PaymentStatus | null> {
-    if (!this.baseUrl || !this.apiKey) {
+  async getPaymentStatus(paymentId: string): Promise<PaymentStatus | null> {
+    if (!this.isConfigured()) {
       console.warn('Pixl Pay not configured, returning mock status')
-      return this.mockGetPaymentStatus(transactionId)
+      return this.mockGetPaymentStatus(paymentId)
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/payments/${transactionId}`, {
+      const response = await fetch(`${this.baseUrl}/payments/${paymentId}`, {
         method: 'GET',
         headers: this.headers,
       })
@@ -149,9 +160,9 @@ class PixlPayClient {
 
       const data = await response.json()
       return {
-        transactionId: data.transaction_id,
-        status: data.status.toUpperCase(),
-        amount: data.amount / 100,
+        transactionId: data.payment_id || data.transaction_id,
+        status: data.status?.toUpperCase() as PaymentStatus['status'],
+        amount: data.amount,
         currency: data.currency,
         paidAt: data.paid_at,
         refundedAt: data.refunded_at,
@@ -164,17 +175,20 @@ class PixlPayClient {
   }
 
   /**
-   * Verify webhook signature
+   * Verify webhook payload and signature
    */
-  verifyWebhookSignature(payload: string, signature: string): boolean {
-    if (!this.apiKey) {
-      console.warn('Pixl Pay not configured, skipping signature verification')
+  verifyWebhook(payload: unknown, signature: string): boolean {
+    if (!this.webhookSecret) {
+      console.warn('Pixl Pay webhook secret not configured, skipping signature verification')
       return true
     }
 
     // In production, implement HMAC signature verification
-    // using the API key as the secret
-    // Example: const expectedSig = crypto.createHmac('sha256', this.apiKey).update(payload).digest('hex')
+    // using the webhook secret
+    // Example: 
+    // const expectedSig = crypto.createHmac('sha256', this.webhookSecret)
+    //   .update(JSON.stringify(payload))
+    //   .digest('hex')
     // return expectedSig === signature
     
     return true // Placeholder - implement proper verification
@@ -184,19 +198,21 @@ class PixlPayClient {
    * Mock implementation for development/testing
    */
   private mockInitiatePayment(request: PaymentRequest): PaymentResponse {
-    const mockTransactionId = `mock_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const mockPaymentId = `mock_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
     
     return {
       success: true,
-      transactionId: mockTransactionId,
-      redirectUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/mock-checkout?txn=${mockTransactionId}&amount=${request.amount}&method=${request.paymentMethod}`,
-      status: 'PENDING',
+      paymentId: mockPaymentId,
+      paymentUrl: `${baseUrl}/api/payments/mock-checkout?membershipId=${request.reference}&paymentId=${mockPaymentId}`,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+      metadata: request.metadata,
     }
   }
 
-  private mockGetPaymentStatus(transactionId: string): PaymentStatus {
+  private mockGetPaymentStatus(paymentId: string): PaymentStatus {
     return {
-      transactionId,
+      transactionId: paymentId,
       status: 'PENDING',
       amount: 0,
       currency: 'GBP',
@@ -206,18 +222,18 @@ class PixlPayClient {
   /**
    * Initiate a refund
    */
-  async initiateRefund(transactionId: string, amount?: number): Promise<{ success: boolean; error?: string }> {
-    if (!this.baseUrl || !this.apiKey) {
+  async initiateRefund(paymentId: string, amount?: number): Promise<{ success: boolean; error?: string }> {
+    if (!this.isConfigured()) {
       console.warn('Pixl Pay not configured, returning mock refund response')
       return { success: true }
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/payments/${transactionId}/refund`, {
+      const response = await fetch(`${this.baseUrl}/payments/${paymentId}/refund`, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify({
-          amount: amount ? Math.round(amount * 100) : undefined,
+          amount: amount,
         }),
       })
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { membersCollection, membershipsCollection, membershipNumbersCollection, subscriptionPlansCollection, cardIssuancesCollection } from '@/lib/db'
 import { memberUpdateSchema } from '@/lib/validation'
 
 export async function GET(
@@ -9,24 +9,26 @@ export async function GET(
   try {
     const { id } = await params
     
-    const member = await prisma.member.findUnique({
-      where: { id },
-      include: {
-        memberships: {
-          include: {
-            membershipNumber: true,
-            subscriptionPlan: true,
-            cardIssuance: true,
-          }
-        }
-      }
-    })
+    const member = await membersCollection.findById(id)
     
     if (!member) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
-    return NextResponse.json(member)
+    const { memberships } = await membershipsCollection.findMany({ memberId: id })
+    
+    const membershipsWithDetails = await Promise.all(
+      memberships.map(async (m) => {
+        const [membershipNumber, subscriptionPlan, cardIssuance] = await Promise.all([
+          membershipNumbersCollection.findById(m.membershipNumberId),
+          subscriptionPlansCollection.findById(m.subscriptionPlanId),
+          cardIssuancesCollection.findByMembershipId(m.id),
+        ])
+        return { ...m, membershipNumber, subscriptionPlan, cardIssuance }
+      })
+    )
+    
+    return NextResponse.json({ ...member, memberships: membershipsWithDetails })
   } catch (error) {
     console.error('Error fetching member:', error)
     return NextResponse.json({ error: 'Failed to fetch member' }, { status: 500 })
@@ -49,15 +51,13 @@ export async function PATCH(
       )
     }
     
-    const existingMember = await prisma.member.findUnique({ where: { id } })
+    const existingMember = await membersCollection.findById(id)
     if (!existingMember) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
     if (validation.data.email && validation.data.email !== existingMember.email) {
-      const emailExists = await prisma.member.findUnique({
-        where: { email: validation.data.email }
-      })
+      const emailExists = await membersCollection.findByEmail(validation.data.email)
       if (emailExists) {
         return NextResponse.json(
           { error: 'A member with this email already exists' },
@@ -66,10 +66,7 @@ export async function PATCH(
       }
     }
     
-    const member = await prisma.member.update({
-      where: { id },
-      data: validation.data
-    })
+    const member = await membersCollection.update(id, validation.data)
     
     return NextResponse.json(member)
   } catch (error) {
@@ -85,23 +82,22 @@ export async function DELETE(
   try {
     const { id } = await params
     
-    const member = await prisma.member.findUnique({
-      where: { id },
-      include: { memberships: true }
-    })
+    const member = await membersCollection.findById(id)
     
     if (!member) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
-    if (member.memberships.length > 0) {
+    const { memberships } = await membershipsCollection.findMany({ memberId: id })
+    
+    if (memberships.length > 0) {
       return NextResponse.json(
         { error: 'Cannot delete member with active memberships' },
         { status: 400 }
       )
     }
     
-    await prisma.member.delete({ where: { id } })
+    await membersCollection.delete(id)
     
     return NextResponse.json({ message: 'Member deleted successfully' })
   } catch (error) {

@@ -1,130 +1,78 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { membershipsCollection, membersCollection, membershipNumbersCollection, subscriptionPlansCollection, systemConfigCollection } from '@/lib/db'
 import { emailService } from '@/lib/email'
-import { addDays, subDays } from 'date-fns'
 
-/**
- * Cron job endpoint to send renewal reminder emails
- * 
- * This should be called daily to send reminders to members whose
- * memberships are expiring within the next 30 days.
- * 
- * The system tracks which reminders have been sent to avoid duplicates.
- */
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization')
+    const authHeader = request.headers.get('authorization')
     const cronSecret = process.env.CRON_SECRET
     
     if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
-    const now = new Date()
-    const thirtyDaysFromNow = addDays(now, 30)
-    const twentyNineDaysFromNow = addDays(now, 29)
     
-    const expiringMemberships = await prisma.membership.findMany({
-      where: {
-        status: 'ACTIVE',
-        expiryDate: {
-          gte: twentyNineDaysFromNow,
-          lte: thirtyDaysFromNow
-        }
-      },
-      include: {
-        member: true,
-        membershipNumber: true,
-        subscriptionPlan: true,
-      }
-    })
-
+    const expiringMemberships = await membershipsCollection.findExpiringInRange(0, 30)
+    
     const results = {
       processed: 0,
-      emailsSent: 0,
-      alreadySent: 0,
+      sent: 0,
+      skipped: 0,
       errors: [] as string[]
     }
-
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
-
+    
     for (const membership of expiringMemberships) {
       results.processed++
-
-      const reminderKey = `renewal_reminder_30d_${membership.id}`
-      const existingReminder = await prisma.systemConfig.findUnique({
-        where: { key: reminderKey }
-      })
-
-      if (existingReminder) {
-        results.alreadySent++
+      
+      const reminderKey = `renewal_reminder_sent_${membership.id}`
+      const alreadySent = await systemConfigCollection.exists(reminderKey)
+      
+      if (alreadySent) {
+        results.skipped++
         continue
       }
-
+      
       try {
-        const renewalUrl = `${appUrl}/membership/renew?id=${membership.id}&token=${Buffer.from(membership.id).toString('base64')}`
-
-        const emailResult = await emailService.sendRenewalReminder({
-          memberName: membership.member.name,
-          memberEmail: membership.member.email,
-          cardNumber: membership.membershipNumber.cardNumber,
-          expiryDate: membership.expiryDate!,
-          subscriptionName: membership.subscriptionPlan.name,
-          renewalUrl,
-        })
-
-        if (emailResult.success) {
-          await prisma.systemConfig.create({
-            data: {
-              key: reminderKey,
-              value: now.toISOString(),
-            }
-          })
-          results.emailsSent++
-        } else {
-          results.errors.push(`Failed to send email to ${membership.member.email}: ${emailResult.error}`)
+        const [member, membershipNumber, subscriptionPlan] = await Promise.all([
+          membersCollection.findById(membership.memberId),
+          membershipNumbersCollection.findById(membership.membershipNumberId),
+          subscriptionPlansCollection.findById(membership.subscriptionPlanId),
+        ])
+        
+        if (!member || !membershipNumber || !subscriptionPlan) {
+          results.errors.push(`Missing data for membership ${membership.id}`)
+          continue
         }
-      } catch (error: any) {
-        results.errors.push(`Error processing membership ${membership.id}: ${error.message}`)
+        
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+        const renewalLink = `${baseUrl}/membership/renew?membershipId=${membership.id}`
+        
+        const { success: sent } = await emailService.sendRenewalReminder({
+          memberName: member.name,
+          memberEmail: member.email,
+          cardNumber: membershipNumber.cardNumber,
+          expiryDate: membership.expiryDate!,
+          subscriptionName: subscriptionPlan.name,
+          renewalUrl: renewalLink
+        })
+        
+        if (sent) {
+          await systemConfigCollection.set(reminderKey, new Date().toISOString())
+          results.sent++
+        } else {
+          results.errors.push(`Failed to send email to ${member.email}`)
+        }
+      } catch (error) {
+        results.errors.push(`Error processing membership ${membership.id}: ${error}`)
       }
     }
-
-    console.log('Renewal reminders completed:', results)
-
-    return NextResponse.json({
-      success: true,
-      ...results,
-      emailConfigured: emailService.isConfigured(),
-      timestamp: now.toISOString()
-    })
-  } catch (error) {
-    console.error('Error sending renewal reminders:', error)
-    return NextResponse.json({ error: 'Failed to send renewal reminders' }, { status: 500 })
-  }
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    const now = new Date()
-    const thirtyDaysFromNow = addDays(now, 30)
     
-    const expiringCount = await prisma.membership.count({
-      where: {
-        status: 'ACTIVE',
-        expiryDate: {
-          gte: now,
-          lte: thirtyDaysFromNow
-        }
-      }
-    })
-
     return NextResponse.json({
-      message: 'Use POST to send renewal reminders',
-      expiringInNext30Days: expiringCount,
-      emailConfigured: emailService.isConfigured(),
-      hint: 'Set CRON_SECRET env var and pass it as Bearer token for production use'
+      message: 'Renewal reminder check completed',
+      results,
+      timestamp: new Date().toISOString()
     })
   } catch (error) {
-    return NextResponse.json({ error: 'Failed to check expiring memberships' }, { status: 500 })
+    console.error('Error running renewal reminders:', error)
+    return NextResponse.json({ error: 'Failed to run renewal reminders' }, { status: 500 })
   }
 }

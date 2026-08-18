@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { adminUsersCollection } from '@/lib/db'
 import { verifyPassword, generateToken } from '@/lib/auth'
 import { adminLoginSchema } from '@/lib/validation'
 
@@ -17,9 +17,7 @@ export async function POST(request: NextRequest) {
     
     const { email, password } = validation.data
     
-    const user = await prisma.adminUser.findUnique({
-      where: { email }
-    })
+    const user = await adminUsersCollection.findByEmail(email)
     
     if (!user || !user.isActive) {
       return NextResponse.json(
@@ -28,9 +26,9 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const isValid = await verifyPassword(password, user.passwordHash)
+    const isValidPassword = await verifyPassword(password, user.passwordHash)
     
-    if (!isValid) {
+    if (!isValidPassword) {
       return NextResponse.json(
         { error: 'Invalid email or password' },
         { status: 401 }
@@ -40,20 +38,17 @@ export async function POST(request: NextRequest) {
     const token = generateToken({
       userId: user.id,
       email: user.email,
-      role: user.role,
+      role: user.role
     })
     
+    const { passwordHash: _, ...userWithoutPassword } = user
+    
     return NextResponse.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-      }
+      user: userWithoutPassword,
+      token
     })
   } catch (error) {
-    console.error('Login error:', error)
+    console.error('Error during login:', error)
     return NextResponse.json({ error: 'Login failed' }, { status: 500 })
   }
 }

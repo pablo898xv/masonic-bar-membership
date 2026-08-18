@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { membershipNumbersCollection, membersCollection } from '@/lib/db'
 import { cardNumberImportSchema } from '@/lib/validation'
-import { v4 as uuid } from 'uuid'
 
 export async function GET(request: NextRequest) {
   try {
@@ -11,43 +10,15 @@ export async function GET(request: NextRequest) {
     const assigned = searchParams.get('assigned')
     const batchId = searchParams.get('batchId')
     
-    const skip = (page - 1) * limit
-    
-    const where: Record<string, unknown> = {}
-    if (assigned === 'true') where.isAssigned = true
-    if (assigned === 'false') where.isAssigned = false
-    if (batchId) where.batchId = batchId
-    
-    const [cardNumbers, total, stats] = await Promise.all([
-      prisma.membershipNumber.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { cardNumber: 'asc' },
-        include: {
-          membership: {
-            include: {
-              member: true
-            }
-          }
-        }
-      }),
-      prisma.membershipNumber.count({ where }),
-      prisma.membershipNumber.groupBy({
-        by: ['isAssigned'],
-        _count: true
-      })
-    ])
-    
-    const statsFormatted = {
-      total: stats.reduce((acc, s) => acc + s._count, 0),
-      assigned: stats.find(s => s.isAssigned)?._count || 0,
-      available: stats.find(s => !s.isAssigned)?._count || 0
-    }
+    const { numbers, total, stats } = await membershipNumbersCollection.findMany({
+      assigned: assigned === 'true' ? true : assigned === 'false' ? false : undefined,
+      batchId: batchId || undefined,
+      take: limit,
+    })
     
     return NextResponse.json({
-      cardNumbers,
-      stats: statsFormatted,
+      cardNumbers: numbers,
+      stats,
       pagination: {
         page,
         limit,
@@ -91,25 +62,15 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const existingNumbers = await prisma.membershipNumber.findMany({
-      where: {
-        cardNumber: {
-          gte: startNumber,
-          lte: endNumber
-        }
-      },
-      select: { cardNumber: true }
-    })
-    
+    const existingNumbers = await membershipNumbersCollection.findInRange(startNumber, endNumber)
     const existingSet = new Set(existingNumbers.map(n => n.cardNumber))
     
-    const newNumbers: { id: string; cardNumber: number; batchId: string | null }[] = []
+    const newNumbers: Array<{ cardNumber: number; batchId?: string }> = []
     const importBatchId = batchId || `batch-${Date.now()}`
     
     for (let num = startNumber; num <= endNumber; num++) {
       if (!existingSet.has(num)) {
         newNumbers.push({
-          id: uuid(),
           cardNumber: num,
           batchId: importBatchId
         })
@@ -123,9 +84,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    await prisma.membershipNumber.createMany({
-      data: newNumbers
-    })
+    await membershipNumbersCollection.createMany(newNumbers)
     
     return NextResponse.json({
       message: `Successfully imported ${newNumbers.length} card numbers`,

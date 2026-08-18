@@ -14,17 +14,21 @@
 
 export interface TillSystemCard {
   cardNumber: string
-  memberName: string
-  memberEmail: string
-  validFrom: Date
-  validUntil: Date
-  cardType: 'QR_CODE' | 'PHYSICAL_CARD'
+  membershipId: string
+  expiryDate: Date
+  magstripeData?: string
+}
+
+export interface TillSystemDisableRequest {
+  cardNumber: string
+  reason?: string
 }
 
 export interface TillSystemResponse {
   success: boolean
   cardId?: string
-  error?: string
+  message?: string
+  data?: Record<string, unknown>
   status?: 'ACTIVE' | 'INACTIVE' | 'EXPIRED' | 'BLOCKED'
 }
 
@@ -70,11 +74,9 @@ class TillSystemClient {
         headers: this.headers,
         body: JSON.stringify({
           card_number: card.cardNumber,
-          member_name: card.memberName,
-          member_email: card.memberEmail,
-          valid_from: card.validFrom.toISOString(),
-          valid_until: card.validUntil.toISOString(),
-          card_type: card.cardType.toLowerCase().replace('_', '-'),
+          membership_id: card.membershipId,
+          expiry_date: card.expiryDate.toISOString(),
+          magstripe_data: card.magstripeData,
         }),
       })
 
@@ -82,7 +84,7 @@ class TillSystemClient {
         const error = await response.json()
         return {
           success: false,
-          error: error.message || 'Failed to enable card',
+          message: error.message || 'Failed to enable card',
         }
       }
 
@@ -90,13 +92,14 @@ class TillSystemClient {
       return {
         success: true,
         cardId: data.card_id,
+        message: 'Card enabled successfully',
         status: 'ACTIVE',
       }
     } catch (error) {
       console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to till system',
+        message: 'Failed to connect to till system',
       }
     }
   }
@@ -109,10 +112,10 @@ class TillSystemClient {
    * 2. A membership is cancelled/refunded
    * 3. A card is reported lost/stolen
    */
-  async disableCard(cardNumber: string, reason?: string): Promise<TillSystemResponse> {
+  async disableCard(request: TillSystemDisableRequest): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
-      return { success: true, status: 'INACTIVE' }
+      return { success: true, message: 'Card disabled (mock)', status: 'INACTIVE' }
     }
 
     try {
@@ -120,8 +123,8 @@ class TillSystemClient {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify({
-          card_number: cardNumber,
-          reason: reason || 'Membership ended',
+          card_number: request.cardNumber,
+          reason: request.reason || 'Membership ended',
         }),
       })
 
@@ -129,19 +132,20 @@ class TillSystemClient {
         const error = await response.json()
         return {
           success: false,
-          error: error.message || 'Failed to disable card',
+          message: error.message || 'Failed to disable card',
         }
       }
 
       return {
         success: true,
+        message: 'Card disabled successfully',
         status: 'INACTIVE',
       }
     } catch (error) {
       console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to till system',
+        message: 'Failed to connect to till system',
       }
     }
   }
@@ -152,7 +156,7 @@ class TillSystemClient {
   async getCardStatus(cardNumber: string): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
-      return { success: true, status: 'INACTIVE' }
+      return { success: true, message: 'Status check (mock)', status: 'INACTIVE', data: {} }
     }
 
     try {
@@ -164,21 +168,23 @@ class TillSystemClient {
       if (!response.ok) {
         return {
           success: false,
-          error: 'Card not found in till system',
+          message: 'Card not found in till system',
         }
       }
 
-      const data = await response.json()
+      const responseData = await response.json()
       return {
         success: true,
-        cardId: data.card_id,
-        status: data.status.toUpperCase(),
+        cardId: responseData.card_id,
+        data: responseData,
+        message: 'Status retrieved',
+        status: responseData.status?.toUpperCase() as 'ACTIVE' | 'INACTIVE' | 'EXPIRED' | 'BLOCKED',
       }
     } catch (error) {
       console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to till system',
+        message: 'Failed to connect to till system',
       }
     }
   }
@@ -189,7 +195,7 @@ class TillSystemClient {
   async extendCard(cardNumber: string, newValidUntil: Date): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
-      return { success: true, status: 'ACTIVE' }
+      return { success: true, message: 'Card extended (mock)', status: 'ACTIVE' }
     }
 
     try {
@@ -205,19 +211,20 @@ class TillSystemClient {
         const error = await response.json()
         return {
           success: false,
-          error: error.message || 'Failed to extend card',
+          message: error.message || 'Failed to extend card',
         }
       }
 
       return {
         success: true,
+        message: 'Card extended successfully',
         status: 'ACTIVE',
       }
     } catch (error) {
       console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to till system',
+        message: 'Failed to connect to till system',
       }
     }
   }
@@ -230,6 +237,7 @@ class TillSystemClient {
     return {
       success: true,
       cardId: `mock_${card.cardNumber}_${Date.now()}`,
+      message: 'Card enabled successfully (mock)',
       status: 'ACTIVE',
     }
   }
