@@ -7,12 +7,12 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 
 export default function SettingsPage() {
-  const [tollSystemStatus, setTollSystemStatus] = useState<'checking' | 'configured' | 'not_configured'>('checking')
+  const [tillSystemStatus, setTillSystemStatus] = useState<'checking' | 'configured' | 'not_configured'>('checking')
   const [pixlPayStatus, setPixlPayStatus] = useState<'checking' | 'configured' | 'not_configured'>('checking')
   
   const envVars = {
-    tollSystem: {
-      TOLL_SYSTEM_API_URL: process.env.NEXT_PUBLIC_TOLL_SYSTEM_API_URL || 'Not set',
+    tillSystem: {
+      TILL_SYSTEM_API_URL: process.env.NEXT_PUBLIC_TILL_SYSTEM_API_URL || 'Not set',
     },
     pixlPay: {
       PIXL_PAY_API_URL: process.env.NEXT_PUBLIC_PIXL_PAY_API_URL || 'Not set',
@@ -70,22 +70,22 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Toll System Integration</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Till System Integration</h2>
               <Badge variant="warning">Not Connected</Badge>
             </div>
           </CardHeader>
           <CardContent>
             <p className="text-sm text-gray-600 mb-4">
-              External toll system for card activation and access control at the bar.
+              External till system for card activation and access control at the bar.
             </p>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-gray-500">API URL</span>
                 <span className="font-mono text-gray-900">
-                  {envVars.tollSystem.TOLL_SYSTEM_API_URL === 'Not set' ? (
+                  {envVars.tillSystem.TILL_SYSTEM_API_URL === 'Not set' ? (
                     <Badge variant="warning">Not configured</Badge>
                   ) : (
-                    envVars.tollSystem.TOLL_SYSTEM_API_URL
+                    envVars.tillSystem.TILL_SYSTEM_API_URL
                   )}
                 </span>
               </div>
@@ -95,7 +95,7 @@ export default function SettingsPage() {
               </div>
             </div>
             <p className="text-xs text-gray-500 mt-4">
-              Set TOLL_SYSTEM_API_URL and TOLL_SYSTEM_API_KEY environment variables when toll system is ready.
+              Set TILL_SYSTEM_API_URL and TILL_SYSTEM_API_KEY environment variables when till system is ready.
             </p>
           </CardContent>
         </Card>
@@ -173,7 +173,7 @@ export default function SettingsPage() {
             <div>
               <h3 className="font-medium text-gray-900">Check Expired Memberships</h3>
               <p className="text-sm text-gray-500">
-                Manually run the expiry check to mark expired memberships and disable toll system access.
+                Manually run the expiry check to mark expired memberships and disable till system access.
               </p>
             </div>
             <Button
@@ -182,7 +182,7 @@ export default function SettingsPage() {
                 try {
                   const res = await fetch('/api/cron/check-expiry', { method: 'POST' })
                   const data = await res.json()
-                  alert(`Processed: ${data.processed}, Expired: ${data.expired}, Toll disabled: ${data.tollSystemDisabled}`)
+                  alert(`Processed: ${data.processed}, Expired: ${data.expired}, Till disabled: ${data.tillSystemDisabled}`)
                 } catch (error) {
                   alert('Failed to run expiry check')
                 }

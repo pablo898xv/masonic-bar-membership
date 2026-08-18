@@ -108,14 +108,14 @@ export default function CardQueuePage() {
 
       if (!res.ok) throw new Error('Failed to issue card')
       
-      const tollRes = await fetch('/api/toll-system/enable', {
+      const tillRes = await fetch('/api/till-system/enable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ membershipId: issuance.membership.id })
       })
 
-      if (!tollRes.ok) {
-        console.warn('Failed to enable card in toll system')
+      if (!tillRes.ok) {
+        console.warn('Failed to enable card in till system')
       }
       
       await fetchQueue()

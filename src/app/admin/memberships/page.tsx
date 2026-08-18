@@ -15,7 +15,7 @@ interface Membership {
   paymentStatus: string
   startDate?: string
   expiryDate?: string
-  tollSystemEnabled: boolean
+  tillSystemEnabled: boolean
   member: {
     id: string
     name: string
@@ -72,16 +72,16 @@ export default function MembershipsPage() {
     return <Badge variant={variants[status] || 'default'}>{status}</Badge>
   }
 
-  const handleEnableTollSystem = async (membershipId: string) => {
+  const handleEnableTillSystem = async (membershipId: string) => {
     try {
-      await fetch('/api/toll-system/enable', {
+      await fetch('/api/till-system/enable', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ membershipId })
       })
       fetchMemberships(pagination.page)
     } catch (error) {
-      console.error('Error enabling toll system:', error)
+      console.error('Error enabling till system:', error)
     }
   }
 
@@ -143,7 +143,7 @@ export default function MembershipsPage() {
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Type</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Status</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Expiry</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Toll</th>
+                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Till</th>
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Actions</th>
                     </tr>
                   </thead>
@@ -178,13 +178,13 @@ export default function MembershipsPage() {
                             : '-'}
                         </td>
                         <td className="py-3 px-4">
-                          {membership.tollSystemEnabled ? (
+                          {membership.tillSystemEnabled ? (
                             <Badge variant="success">Enabled</Badge>
                           ) : membership.status === 'ACTIVE' ? (
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => handleEnableTollSystem(membership.id)}
+                              onClick={() => handleEnableTillSystem(membership.id)}
                             >
                               Enable
                             </Button>

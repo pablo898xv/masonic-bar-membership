@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/prisma'
-import { tollSystem } from '@/lib/toll-system'
+import { tillSystem } from '@/lib/till-system'
 
 /**
  * Cron job endpoint to check for expired memberships
  * 
  * This should be called periodically (e.g., daily) to:
  * 1. Mark expired memberships as EXPIRED
- * 2. Disable expired cards in the toll system
+ * 2. Disable expired cards in the till system
  * 
  * In production, set up a cron job or scheduled task to call this endpoint.
  * You can protect this with a secret key in production.
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     const results = {
       processed: 0,
       expired: 0,
-      tollSystemDisabled: 0,
+      tillSystemDisabled: 0,
       errors: [] as string[]
     }
     
@@ -52,20 +52,20 @@ export async function POST(request: NextRequest) {
         })
         results.expired++
         
-        if (membership.tollSystemEnabled) {
+        if (membership.tillSystemEnabled) {
           const magstripePrefix = process.env.MAGSTRIPE_PREFIX || ';9998'
           const cardNumber = `${magstripePrefix}${membership.membershipNumber.cardNumber}`
           
-          const tollResult = await tollSystem.disableCard(cardNumber, 'Membership expired')
+          const tillResult = await tillSystem.disableCard(cardNumber, 'Membership expired')
           
-          if (tollResult.success) {
+          if (tillResult.success) {
             await prisma.membership.update({
               where: { id: membership.id },
-              data: { tollSystemEnabled: false }
+              data: { tillSystemEnabled: false }
             })
-            results.tollSystemDisabled++
+            results.tillSystemDisabled++
           } else {
-            results.errors.push(`Failed to disable toll system for membership ${membership.id}: ${tollResult.error}`)
+            results.errors.push(`Failed to disable till system for membership ${membership.id}: ${tillResult.error}`)
           }
         }
       } catch (error: any) {

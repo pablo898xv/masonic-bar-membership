@@ -36,8 +36,8 @@ A comprehensive membership management system for the Masonic Hall Bar, supportin
   - Open Banking payments
 - Mock payment flow for development/testing
 
-### Toll System Integration
-- API stub for external toll system integration
+### Till System Integration
+- API stub for external till system integration
 - Enable/disable cards for access control
 - Automatic expiry handling
 
@@ -89,9 +89,9 @@ PIXL_PAY_API_URL="https://api.pixlpay.example.com"
 PIXL_PAY_API_KEY=""
 PIXL_PAY_MERCHANT_ID=""
 
-# Toll System Integration
-TOLL_SYSTEM_API_URL=""
-TOLL_SYSTEM_API_KEY=""
+# Till System Integration
+TILL_SYSTEM_API_URL=""
+TILL_SYSTEM_API_KEY=""
 
 # Apple Wallet Pass Configuration
 PASS_TYPE_IDENTIFIER="pass.com.masonichall.membership"
@@ -140,7 +140,7 @@ Public registration at `/membership/register`:
 3. Bar manager encodes magstripe data using card writer
 4. Card marked as "Encoded"
 5. Member collects card → marked as "Issued"
-6. System enables card in toll system
+6. System enables card in till system
 
 ### API Endpoints
 
@@ -181,10 +181,10 @@ Public registration at `/membership/register`:
 - `POST /api/payments/webhook` - Payment webhook
 - `GET /api/payments/mock-checkout` - Mock checkout (dev)
 
-#### Toll System
-- `POST /api/toll-system/enable` - Enable card
-- `POST /api/toll-system/disable` - Disable card
-- `GET /api/toll-system/status` - Check card status
+#### Till System
+- `POST /api/till-system/enable` - Enable card
+- `POST /api/till-system/disable` - Disable card
+- `GET /api/till-system/status` - Check card status
 
 #### Maintenance
 - `POST /api/cron/check-expiry` - Run expiry check
@@ -204,12 +204,12 @@ The integration supports:
 - Open Banking payments
 - Webhook handling for payment status updates
 
-### Toll System Integration
+### Till System Integration
 
-The toll system integration is prepared for the external access control system. When ready:
+The till system integration is prepared for the external access control system. When ready:
 
-1. Set `TOLL_SYSTEM_API_URL` to the toll system endpoint
-2. Set `TOLL_SYSTEM_API_KEY` for authentication
+1. Set `TILL_SYSTEM_API_URL` to the till system endpoint
+2. Set `TILL_SYSTEM_API_KEY` for authentication
 3. The system will automatically enable cards on activation and disable on expiry
 
 ### Apple Wallet Pass

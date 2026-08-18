@@ -1,18 +1,18 @@
 /**
- * Toll System Integration Module
+ * Till System Integration Module
  * 
- * This module provides integration with the external toll system
+ * This module provides integration with the external till system
  * that manages access control for the Masonic Hall Bar.
  * 
- * The toll system needs to be notified when a membership card is activated
+ * The till system needs to be notified when a membership card is activated
  * so that the card can be used for access/payment at the bar.
  * 
  * Configuration required:
- * - TOLL_SYSTEM_API_URL: Base URL of the toll system API
- * - TOLL_SYSTEM_API_KEY: API key for authentication
+ * - TILL_SYSTEM_API_URL: Base URL of the till system API
+ * - TILL_SYSTEM_API_KEY: API key for authentication
  */
 
-export interface TollSystemCard {
+export interface TillSystemCard {
   cardNumber: string
   memberName: string
   memberEmail: string
@@ -21,20 +21,20 @@ export interface TollSystemCard {
   cardType: 'QR_CODE' | 'PHYSICAL_CARD'
 }
 
-export interface TollSystemResponse {
+export interface TillSystemResponse {
   success: boolean
   cardId?: string
   error?: string
   status?: 'ACTIVE' | 'INACTIVE' | 'EXPIRED' | 'BLOCKED'
 }
 
-class TollSystemClient {
+class TillSystemClient {
   private baseUrl: string
   private apiKey: string
 
   constructor() {
-    this.baseUrl = process.env.TOLL_SYSTEM_API_URL || ''
-    this.apiKey = process.env.TOLL_SYSTEM_API_KEY || ''
+    this.baseUrl = process.env.TILL_SYSTEM_API_URL || ''
+    this.apiKey = process.env.TILL_SYSTEM_API_KEY || ''
   }
 
   private get headers() {
@@ -45,22 +45,22 @@ class TollSystemClient {
   }
 
   /**
-   * Check if the toll system is configured
+   * Check if the till system is configured
    */
   isConfigured(): boolean {
     return !!(this.baseUrl && this.apiKey)
   }
 
   /**
-   * Enable a membership card in the toll system
+   * Enable a membership card in the till system
    * 
    * This should be called when:
    * 1. A QR code membership is activated (payment completed)
    * 2. A physical card is issued to the member
    */
-  async enableCard(card: TollSystemCard): Promise<TollSystemResponse> {
+  async enableCard(card: TillSystemCard): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
-      console.warn('Toll system not configured, returning mock response')
+      console.warn('Till system not configured, returning mock response')
       return this.mockEnableCard(card)
     }
 
@@ -93,25 +93,25 @@ class TollSystemClient {
         status: 'ACTIVE',
       }
     } catch (error) {
-      console.error('Toll system API error:', error)
+      console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to toll system',
+        error: 'Failed to connect to till system',
       }
     }
   }
 
   /**
-   * Disable a membership card in the toll system
+   * Disable a membership card in the till system
    * 
    * This should be called when:
    * 1. A membership expires
    * 2. A membership is cancelled/refunded
    * 3. A card is reported lost/stolen
    */
-  async disableCard(cardNumber: string, reason?: string): Promise<TollSystemResponse> {
+  async disableCard(cardNumber: string, reason?: string): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
-      console.warn('Toll system not configured, returning mock response')
+      console.warn('Till system not configured, returning mock response')
       return { success: true, status: 'INACTIVE' }
     }
 
@@ -138,20 +138,20 @@ class TollSystemClient {
         status: 'INACTIVE',
       }
     } catch (error) {
-      console.error('Toll system API error:', error)
+      console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to toll system',
+        error: 'Failed to connect to till system',
       }
     }
   }
 
   /**
-   * Check the status of a card in the toll system
+   * Check the status of a card in the till system
    */
-  async getCardStatus(cardNumber: string): Promise<TollSystemResponse> {
+  async getCardStatus(cardNumber: string): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
-      console.warn('Toll system not configured, returning mock response')
+      console.warn('Till system not configured, returning mock response')
       return { success: true, status: 'INACTIVE' }
     }
 
@@ -164,7 +164,7 @@ class TollSystemClient {
       if (!response.ok) {
         return {
           success: false,
-          error: 'Card not found in toll system',
+          error: 'Card not found in till system',
         }
       }
 
@@ -175,10 +175,10 @@ class TollSystemClient {
         status: data.status.toUpperCase(),
       }
     } catch (error) {
-      console.error('Toll system API error:', error)
+      console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to toll system',
+        error: 'Failed to connect to till system',
       }
     }
   }
@@ -186,9 +186,9 @@ class TollSystemClient {
   /**
    * Extend the validity of a card (for renewals)
    */
-  async extendCard(cardNumber: string, newValidUntil: Date): Promise<TollSystemResponse> {
+  async extendCard(cardNumber: string, newValidUntil: Date): Promise<TillSystemResponse> {
     if (!this.isConfigured()) {
-      console.warn('Toll system not configured, returning mock response')
+      console.warn('Till system not configured, returning mock response')
       return { success: true, status: 'ACTIVE' }
     }
 
@@ -214,10 +214,10 @@ class TollSystemClient {
         status: 'ACTIVE',
       }
     } catch (error) {
-      console.error('Toll system API error:', error)
+      console.error('Till system API error:', error)
       return {
         success: false,
-        error: 'Failed to connect to toll system',
+        error: 'Failed to connect to till system',
       }
     }
   }
@@ -225,8 +225,8 @@ class TollSystemClient {
   /**
    * Mock implementation for development/testing
    */
-  private mockEnableCard(card: TollSystemCard): TollSystemResponse {
-    console.log('Mock toll system: Enabling card', card.cardNumber)
+  private mockEnableCard(card: TillSystemCard): TillSystemResponse {
+    console.log('Mock till system: Enabling card', card.cardNumber)
     return {
       success: true,
       cardId: `mock_${card.cardNumber}_${Date.now()}`,
@@ -235,5 +235,5 @@ class TollSystemClient {
   }
 }
 
-export const tollSystem = new TollSystemClient()
-export default tollSystem
+export const tillSystem = new TillSystemClient()
+export default tillSystem
