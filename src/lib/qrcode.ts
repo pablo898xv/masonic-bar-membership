@@ -10,6 +10,10 @@ export interface QRCodeOptions {
   }
 }
 
+function byteSegment(data: string) {
+  return [{ data: Buffer.from(data, 'latin1'), mode: 'byte' as const }]
+}
+
 /**
  * Generate QR code as data URL (base64 PNG)
  */
@@ -27,7 +31,7 @@ export async function generateQRCodeDataURL(
     ...options,
   }
 
-  return QRCode.toDataURL(data, defaultOptions)
+  return QRCode.toDataURL(byteSegment(data), defaultOptions)
 }
 
 /**
@@ -47,7 +51,7 @@ export async function generateQRCodeBuffer(
     ...options,
   }
 
-  return QRCode.toBuffer(data, defaultOptions)
+  return QRCode.toBuffer(byteSegment(data), defaultOptions)
 }
 
 /**
@@ -67,7 +71,7 @@ export async function generateQRCodeSVG(
     ...options,
   }
 
-  return QRCode.toString(data, { ...defaultOptions, type: 'svg' })
+  return QRCode.toString(byteSegment(data), { ...defaultOptions, type: 'svg' })
 }
 
 /**

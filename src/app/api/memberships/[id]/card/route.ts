@@ -34,9 +34,10 @@ export async function GET(
     }
 
     let qrCodeImage: string | null = null
+    let qrPayload: string | null = null
     if (hasDigitalCard(membership.cardType) && membership.status === 'ACTIVE') {
-      const qrData = await formatMembershipQRData(membershipNumber.cardNumber)
-      qrCodeImage = await generateQRCodeDataURL(qrData, { width: 360 })
+      qrPayload = await formatMembershipQRData(membershipNumber.cardNumber)
+      qrCodeImage = await generateQRCodeDataURL(qrPayload, { width: 360 })
     }
 
     return NextResponse.json({
@@ -48,6 +49,7 @@ export async function GET(
       planName: subscriptionPlan.name,
       expiryDate: membership.expiryDate,
       qrCodeImage,
+      qrPayload,
       appleWalletAvailable:
         (await isWalletPassConfigured()) &&
         hasDigitalCard(membership.cardType) &&

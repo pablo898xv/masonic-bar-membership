@@ -204,7 +204,7 @@ export default function MembershipsPage() {
                             </Link>
                             {membership.status === 'ACTIVE' && hasDigitalCard(membership.cardType) && (
                               <Link
-                                href={`/api/memberships/${membership.id}/wallet-pass?format=qrcode`}
+                                href={`/api/memberships/${membership.id}/wallet-pass?format=preview`}
                                 target="_blank"
                                 className="text-green-600 hover:underline text-sm"
                               >

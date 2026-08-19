@@ -398,7 +398,7 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
               </Button>
             )}
             {hasDigitalCard(membership.cardType) && membership.status === 'ACTIVE' && (
-              <Link href={`/api/memberships/${membership.id}/wallet-pass?format=qrcode`} target="_blank">
+              <Link href={`/api/memberships/${membership.id}/wallet-pass?format=preview`} target="_blank">
                 <Button size="sm" variant="secondary">View QR code</Button>
               </Link>
             )}

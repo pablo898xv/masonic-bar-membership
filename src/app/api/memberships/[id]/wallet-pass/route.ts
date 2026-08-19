@@ -91,6 +91,28 @@ export async function GET(
       }, { status: 501 })
     }
     
+    if (format === 'preview') {
+      const pngUrl = `/api/memberships/${id}/wallet-pass?format=png${token ? `&token=${encodeURIComponent(token)}` : ''}`
+      const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Card #${membershipNumber.cardNumber}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 28rem; margin: 2rem auto; text-align: center; color: #0f172a;">
+  <p style="color:#64748b; font-size:0.875rem;">${member.name}</p>
+  <img src="${pngUrl}" alt="Membership QR code" width="280" height="280" />
+  <p style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.08em; color:#64748b; margin: 1rem 0 0;">Till scan data</p>
+  <p style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:1.5rem; font-weight:700; margin: 0.35rem 0 0;">${qrData}</p>
+  <p style="font-size:0.8rem; color:#64748b; margin-top:0.75rem;">iPhone Camera hides the ; and ? around the number. A bar scanner still receives this full string.</p>
+</body>
+</html>`
+      return new NextResponse(html, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+    }
+
     const qrBuffer = await generateQRCodeBuffer(qrData)
     
     return new NextResponse(new Uint8Array(qrBuffer), {
