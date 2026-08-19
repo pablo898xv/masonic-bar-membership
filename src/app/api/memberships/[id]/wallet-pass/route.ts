@@ -102,10 +102,9 @@ export async function GET(
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 28rem; margin: 2rem auto; text-align: center; color: #0f172a;">
   <p style="color:#64748b; font-size:0.875rem;">${member.name}</p>
+  <p style="font-weight:600; margin: 0.25rem 0 1rem;">Card #${membershipNumber.cardNumber}</p>
   <img src="${pngUrl}" alt="Membership QR code" width="280" height="280" />
-  <p style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.08em; color:#64748b; margin: 1rem 0 0;">Till scan data</p>
-  <p style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:1.5rem; font-weight:700; margin: 0.35rem 0 0;">${qrData}</p>
-  <p style="font-size:0.8rem; color:#64748b; margin-top:0.75rem;">iPhone Camera hides the ; and ? around the number. A bar scanner still receives this full string.</p>
+  <p style="font-size:0.875rem; color:#64748b; margin-top:1rem;">Show this code at the bar</p>
 </body>
 </html>`
       return new NextResponse(html, {

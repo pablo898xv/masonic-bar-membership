@@ -14,7 +14,6 @@ interface CardData {
   planName: string
   expiryDate?: string
   qrCodeImage: string | null
-  qrPayload: string | null
   appleWalletAvailable: boolean
   googleWalletAvailable: boolean
 }
@@ -116,16 +115,7 @@ export default function MembershipCardPage() {
           {card.qrCodeImage && card.status === 'ACTIVE' ? (
             <div className="bg-white px-6 py-6 text-center">
               <img src={card.qrCodeImage} alt="Membership QR code" className="mx-auto h-56 w-56" />
-              {card.qrPayload && (
-                <div className="mt-3">
-                  <p className="text-xs uppercase tracking-wide text-slate-500">Till scan data</p>
-                  <p className="mt-1 font-mono text-lg font-semibold tracking-wide text-slate-900">{card.qrPayload}</p>
-                  <p className="mt-2 text-xs text-slate-500">
-                    iPhone Camera hides the ; and ? around the number. A bar scanner still receives the full string.
-                  </p>
-                </div>
-              )}
-              <p className="mt-2 text-sm text-slate-600">Show this code at the bar</p>
+              <p className="mt-3 text-sm text-slate-600">Show this code at the bar</p>
             </div>
           ) : (
             <div className="px-6 py-8 text-center text-slate-300">
