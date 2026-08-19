@@ -8,6 +8,15 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
     const search = searchParams.get('search') || ''
+    const email = searchParams.get('email')
+
+    if (email) {
+      const member = await membersCollection.findByEmail(email)
+      return NextResponse.json({
+        members: member ? [member] : [],
+        pagination: { page: 1, limit: 1, total: member ? 1 : 0, totalPages: member ? 1 : 0 }
+      })
+    }
     
     const { members, total } = await membersCollection.findMany({
       search: search || undefined,

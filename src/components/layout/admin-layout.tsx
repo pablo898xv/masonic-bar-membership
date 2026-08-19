@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { ReactNode } from 'react'
+import { Msrx6StatusBar } from '@/components/admin/msrx6-status-bar'
 
 interface AdminLayoutProps {
   children: ReactNode
@@ -14,6 +15,7 @@ const navigation = [
   { name: 'Memberships', href: '/admin/memberships', icon: CreditCardIcon },
   { name: 'Card Queue', href: '/admin/card-queue', icon: QueueIcon },
   { name: 'Card Numbers', href: '/admin/card-numbers', icon: HashIcon },
+  { name: 'Card Lookup', href: '/admin/card-lookup', icon: SearchIcon },
   { name: 'Subscriptions', href: '/admin/subscriptions', icon: CalendarIcon },
   { name: 'Settings', href: '/admin/settings', icon: SettingsIcon },
 ]
@@ -58,6 +60,14 @@ function HashIcon() {
   )
 }
 
+function SearchIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M11 19a8 8 0 100-16 8 8 0 000 16z" />
+    </svg>
+  )
+}
+
 function CalendarIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -85,7 +95,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
         <div className="fixed inset-y-0 left-0 w-64 bg-slate-900">
           <div className="flex flex-col h-full">
             <div className="flex items-center h-16 px-6 bg-slate-800">
-              <h1 className="text-xl font-bold text-white">Masonic Hall Bar</h1>
+              <h1 className="text-xl font-bold text-white">Membership Manager</h1>
             </div>
             
             <nav className="flex-1 px-4 py-4 space-y-1">
@@ -126,6 +136,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
         
         {/* Main content */}
         <div className="flex-1 ml-64">
+          <Msrx6StatusBar />
           <main className="p-8">
             {children}
           </main>

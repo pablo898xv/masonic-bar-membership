@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid'
 import { format } from 'date-fns'
 import { generateQRCodeBuffer, formatMembershipQRData } from './qrcode'
+import { getAppSettings } from './settings'
 
 /**
  * Apple Wallet Pass Configuration
@@ -75,21 +76,22 @@ export async function generateWalletPass(options: {
 }): Promise<GeneratedPass> {
   const { cardNumber, memberName, memberEmail, subscriptionName, expiryDate } = options
   
-  const passTypeId = process.env.PASS_TYPE_IDENTIFIER || 'pass.com.masonichall.membership'
-  const teamIdentifier = process.env.TEAM_IDENTIFIER || 'TEAM_ID'
+  const settings = await getAppSettings()
+  const passTypeId = settings.passTypeIdentifier || 'pass.com.masonichall.membership'
+  const teamIdentifier = settings.teamIdentifier || 'TEAM_ID'
   
   const serialNumber = uuid()
   const authToken = uuid().replace(/-/g, '')
-  const qrCodeData = formatMembershipQRData(cardNumber)
+  const qrCodeData = await formatMembershipQRData(cardNumber)
   
   const passData: WalletPassData = {
     passTypeId,
     serialNumber,
     authToken,
     teamIdentifier,
-    organizationName: 'Masonic Hall Bar',
+    organizationName: 'Membership Manager',
     description: 'Membership Card',
-    logoText: 'Masonic Hall',
+    logoText: 'Membership Manager',
     foregroundColor: 'rgb(255, 255, 255)',
     backgroundColor: 'rgb(25, 55, 95)',
     labelColor: 'rgb(200, 200, 200)',
@@ -159,12 +161,13 @@ export async function generateWalletPass(options: {
 /**
  * Check if Apple Wallet pass generation is configured
  */
-export function isWalletPassConfigured(): boolean {
-  return !!(
-    process.env.PASS_TYPE_IDENTIFIER &&
-    process.env.TEAM_IDENTIFIER &&
-    process.env.PASS_CERTIFICATE_PATH &&
-    process.env.PASS_CERTIFICATE_PASSWORD
+export async function isWalletPassConfigured(): Promise<boolean> {
+  const settings = await getAppSettings()
+  return Boolean(
+    settings.passTypeIdentifier &&
+      settings.teamIdentifier &&
+      settings.passCertificatePath &&
+      settings.passCertificatePassword
   )
 }
 
@@ -176,7 +179,7 @@ export function isWalletPassConfigured(): boolean {
  * use passkit-generator to create a signed .pkpass file.
  */
 export async function generatePkpassFile(passData: WalletPassData): Promise<Buffer | null> {
-  if (!isWalletPassConfigured()) {
+  if (!(await isWalletPassConfigured())) {
     console.warn('Apple Wallet pass generation not configured')
     return null
   }

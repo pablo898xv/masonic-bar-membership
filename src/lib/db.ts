@@ -1,5 +1,4 @@
 import { getDb, Timestamp } from './firebase'
-import { FieldValue } from 'firebase-admin/firestore'
 
 export interface Member {
   id: string
@@ -35,15 +34,16 @@ export interface Membership {
   memberId: string
   membershipNumberId: string
   subscriptionPlanId: string
-  cardType: 'QR_CODE' | 'PHYSICAL_CARD'
+  cardType: 'QR_CODE' | 'PHYSICAL_CARD' | 'BOTH'
   status: 'PENDING_PAYMENT' | 'PAID' | 'ACTIVE' | 'EXPIRED' | 'CANCELLED'
   startDate?: Date
   expiryDate?: Date
   paymentId?: string
-  paymentMethod?: 'CARD' | 'OPEN_BANKING'
+  paymentMethod?: 'CARD' | 'OPEN_BANKING' | 'COMPLIMENTARY'
   paymentStatus: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'REFUNDED'
   tillSystemEnabled: boolean
   tillSystemEnabledAt?: Date
+  accessToken?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -81,7 +81,7 @@ export interface PaymentTransaction {
   membershipId?: string
   amount: number
   currency: string
-  paymentMethod: 'CARD' | 'OPEN_BANKING'
+  paymentMethod: 'CARD' | 'OPEN_BANKING' | 'COMPLIMENTARY'
   provider: string
   externalId?: string
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'REFUNDED'
@@ -334,6 +334,26 @@ export const membershipNumbersCollection = {
     return updated!
   },
 
+  async release(id: string): Promise<MembershipNumber> {
+    const existing = await this.findById(id)
+    if (!existing) {
+      throw new Error('Card number not found')
+    }
+
+    const db = getDb()
+    await db.collection(COLLECTIONS.membershipNumbers).doc(id).set(
+      toFirestoreData({
+        id: existing.id,
+        cardNumber: existing.cardNumber,
+        ...(existing.batchId ? { batchId: existing.batchId } : {}),
+        isAssigned: false,
+        createdAt: existing.createdAt,
+      })
+    )
+    const updated = await this.findById(id)
+    return updated!
+  },
+
   async countAvailable(): Promise<number> {
     const db = getDb()
     const snapshot = await db.collection(COLLECTIONS.membershipNumbers)
@@ -520,6 +540,21 @@ export const membershipsCollection = {
       .count()
       .get()
     return snapshot.data().count
+  },
+
+  async findByMembershipNumberId(membershipNumberId: string): Promise<Membership[]> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.memberships)
+      .where('membershipNumberId', '==', membershipNumberId)
+      .get()
+    return snapshot.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) =>
+      fromFirestoreData<Membership>(d.id, d.data())
+    )
+  },
+
+  async delete(id: string): Promise<void> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.memberships).doc(id).delete()
   }
 }
 
@@ -596,6 +631,11 @@ export const cardIssuancesCollection = {
     return updated!
   },
 
+  async delete(id: string): Promise<void> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.cardIssuances).doc(id).delete()
+  },
+
   async countByStatus(): Promise<Record<string, number>> {
     const db = getDb()
     const snapshot = await db.collection(COLLECTIONS.cardIssuances).get()
@@ -635,6 +675,11 @@ export const walletPassesCollection = {
     return fromFirestoreData<WalletPass>(doc.id, doc.data())
   },
 
+  async delete(id: string): Promise<void> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.walletPasses).doc(id).delete()
+  },
+
   async update(id: string, data: Partial<WalletPass>): Promise<WalletPass> {
     const db = getDb()
     await db.collection(COLLECTIONS.walletPasses).doc(id).update(toFirestoreData(data as Record<string, unknown>))
@@ -651,6 +696,21 @@ export const paymentTransactionsCollection = {
     const transaction: PaymentTransaction = { ...data, id: docRef.id, createdAt: now, updatedAt: now }
     await docRef.set(toFirestoreData(transaction as unknown as Record<string, unknown>))
     return transaction
+  },
+
+  async findByMembershipId(membershipId: string): Promise<PaymentTransaction[]> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.paymentTransactions)
+      .where('membershipId', '==', membershipId)
+      .get()
+    return snapshot.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) =>
+      fromFirestoreData<PaymentTransaction>(d.id, d.data())
+    )
+  },
+
+  async delete(id: string): Promise<void> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.paymentTransactions).doc(id).delete()
   },
 
   async findByExternalId(externalId: string): Promise<PaymentTransaction | null> {

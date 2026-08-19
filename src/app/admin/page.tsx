@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
+import { cardTypeLabel } from '@/lib/card-type'
 
 interface DashboardStats {
   members: number
@@ -64,7 +65,7 @@ export default function AdminDashboard() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-500 mt-1">Welcome to the Masonic Hall Bar membership management system</p>
+        <p className="text-gray-500 mt-1">Welcome to Membership Manager</p>
       </div>
 
       {/* Stats Grid */}
@@ -190,7 +191,7 @@ export default function AdminDashboard() {
                     <div>
                       <p className="font-medium text-gray-900">{membership.member?.name}</p>
                       <p className="text-sm text-gray-500">
-                        Card #{membership.membershipNumber?.cardNumber} • {membership.cardType === 'QR_CODE' ? 'QR Code' : 'Physical Card'}
+                        Card #{membership.membershipNumber?.cardNumber} • {cardTypeLabel(membership.cardType)}
                       </p>
                     </div>
                     <Badge variant={

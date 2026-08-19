@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
+import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
+import { isMsrx6Cancelled } from '@/lib/msrx6/device'
 
 interface CardNumber {
   id: string
@@ -13,11 +15,19 @@ interface CardNumber {
   batchId?: string
   isAssigned: boolean
   assignedAt?: string
+  magstripeData: string
   membership?: {
+    id: string
+    status: string
+    cardType: string
     member: {
       name: string
     }
-  }
+  } | null
+  cardIssuance?: {
+    id: string
+    queueStatus: string
+  } | null
 }
 
 export default function CardNumbersPage() {
@@ -27,9 +37,20 @@ export default function CardNumbersPage() {
   const [showImportModal, setShowImportModal] = useState(false)
   const [importData, setImportData] = useState({ startNumber: '', endNumber: '', batchId: '' })
   const [importing, setImporting] = useState(false)
-  const [importResult, setImportResult] = useState<any>(null)
+  const [importResult, setImportResult] = useState<{ success: boolean; error?: string; imported?: number; skipped?: number } | null>(null)
   const [filter, setFilter] = useState<'all' | 'assigned' | 'available'>('all')
   const [pagination, setPagination] = useState({ page: 1, total: 0, totalPages: 0 })
+  const [selected, setSelected] = useState<CardNumber | null>(null)
+  const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
+  const [actionLoading, setActionLoading] = useState(false)
+  const writer = useMsrx6()
+
+  const closeEncodeModal = () => {
+    void writer.cancelOperation()
+    setSelected(null)
+    setEncodeMessage(null)
+    setActionLoading(false)
+  }
 
   const fetchCardNumbers = async (page = 1) => {
     setLoading(true)
@@ -79,10 +100,60 @@ export default function CardNumbersPage() {
         setImportResult({ success: true, ...data })
         fetchCardNumbers()
       }
-    } catch (error: any) {
-      setImportResult({ success: false, error: error.message })
+    } catch (error) {
+      setImportResult({ success: false, error: error instanceof Error ? error.message : 'Import failed' })
     } finally {
       setImporting(false)
+    }
+  }
+
+  const markEncodedIfQueued = async (card: CardNumber) => {
+    if (card.cardIssuance?.queueStatus !== 'READY_TO_ENCODE') return
+    const res = await fetch(`/api/card-issuance/${card.cardIssuance.id}/encode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        encodedBy: writer.connected ? 'MSRx6' : 'Bar Manager',
+        notes: writer.connected
+          ? `MSRx6 ${writer.transport || 'bluetooth'} ${writer.coercivity}, encoded from card numbers`
+          : 'Marked encoded from card numbers',
+      }),
+    })
+    if (!res.ok) throw new Error('Wrote the card, but failed to mark it encoded in the queue')
+  }
+
+  const handleWriterEncode = async (card: CardNumber) => {
+    setActionLoading(true)
+    setEncodeMessage('Sending write command. Swipe the blank card through the MSRx6 now.')
+    try {
+      await writer.encodeCard(card.magstripeData)
+      await markEncodedIfQueued(card)
+      setEncodeMessage('Card encoded.')
+      setSelected(null)
+      fetchCardNumbers(pagination.page)
+    } catch (error) {
+      if (isMsrx6Cancelled(error)) {
+        setEncodeMessage(null)
+        return
+      }
+      const message = error instanceof Error ? error.message : 'Writer encode failed'
+      setEncodeMessage(message)
+      writer.setError(message)
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleManualEncode = async (card: CardNumber) => {
+    setActionLoading(true)
+    try {
+      await markEncodedIfQueued(card)
+      setSelected(null)
+      fetchCardNumbers(pagination.page)
+    } catch (error) {
+      setEncodeMessage(error instanceof Error ? error.message : 'Failed to mark encoded')
+    } finally {
+      setActionLoading(false)
     }
   }
 
@@ -174,9 +245,17 @@ export default function CardNumbersPage() {
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
                 {cardNumbers.map((num) => (
-                  <div
+                  <button
                     key={num.id}
-                    className={`p-3 rounded-lg border text-center ${
+                    type="button"
+                    onClick={() => {
+                      setEncodeMessage(null)
+                      setSelected(num)
+                      if (writer.connected) {
+                        void handleWriterEncode(num)
+                      }
+                    }}
+                    className={`p-3 rounded-lg border text-center w-full transition-shadow hover:shadow-md ${
                       num.isAssigned
                         ? 'bg-blue-50 border-blue-200'
                         : 'bg-green-50 border-green-200'
@@ -194,7 +273,8 @@ export default function CardNumbersPage() {
                     >
                       {num.isAssigned ? 'Assigned' : 'Available'}
                     </Badge>
-                  </div>
+                    <p className="text-xs text-blue-700 mt-2">Encode</p>
+                  </button>
                 ))}
               </div>
 
@@ -227,6 +307,66 @@ export default function CardNumbersPage() {
           )}
         </CardContent>
       </Card>
+
+      <Modal
+        isOpen={!!selected}
+        onClose={closeEncodeModal}
+        title={selected ? `Encode card #${selected.cardNumber}` : 'Encode card'}
+      >
+        {selected && (
+          <div className="space-y-4">
+            {selected.membership?.member && (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-500">Assigned to</p>
+                <p className="font-medium">{selected.membership.member.name}</p>
+              </div>
+            )}
+            <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
+              <p className="text-sm text-yellow-700">Track 2 data (till swipe):</p>
+              <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">
+                {selected.magstripeData}
+              </p>
+            </div>
+            <p className="text-sm text-gray-600">
+              Swipe the physical card with <strong>#{selected.cardNumber}</strong> printed on the back.
+              {writer.connected
+                ? ' Swipe once to encode, then swipe again to verify.'
+                : ' Connect the MSRx6 from the bar at the top of the page, or write this data in EasyMSR.'}
+            </p>
+            {selected.cardIssuance?.queueStatus === 'READY_TO_ENCODE' && (
+              <p className="text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                This card is in the encode queue. A successful write will mark it encoded.
+              </p>
+            )}
+            {encodeMessage && (
+              <p className={`text-sm rounded-lg p-3 ${
+                actionLoading || writer.phase === 'writing' || writer.phase === 'verifying'
+                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                  : 'bg-red-50 text-red-800 border border-red-200'
+              }`}>
+                {writer.phase === 'writing' && 'Swipe the blank card through the writer now. '}
+                {writer.phase === 'verifying' && 'Write succeeded. Swipe the same card again to verify. '}
+                {encodeMessage}
+              </p>
+            )}
+            <div className="flex justify-end gap-3 pt-4">
+              <Button variant="secondary" onClick={closeEncodeModal}>
+                Cancel
+              </Button>
+              {selected.cardIssuance?.queueStatus === 'READY_TO_ENCODE' && (
+                <Button variant="ghost" onClick={() => handleManualEncode(selected)} loading={actionLoading}>
+                  Mark encoded manually
+                </Button>
+              )}
+              {writer.connected && (
+                <Button onClick={() => handleWriterEncode(selected)} loading={actionLoading}>
+                  {writer.phase === 'writing' || writer.phase === 'verifying' ? 'Waiting for swipe…' : 'Retry write'}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={showImportModal}

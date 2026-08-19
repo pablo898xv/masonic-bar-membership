@@ -22,6 +22,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
+    if (membership.paymentMethod === 'COMPLIMENTARY') {
+      return NextResponse.json(
+        { error: 'Complimentary memberships do not require payment' },
+        { status: 400 }
+      )
+    }
+
     if (membership.status !== 'PENDING_PAYMENT') {
       return NextResponse.json(
         { error: 'Payment already processed or membership not in pending state' },
@@ -38,20 +45,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Related data not found' }, { status: 404 })
     }
     
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-    const webhookUrl = `${baseUrl}/api/payments/webhook`
-    const successUrl = returnUrl || `${baseUrl}/membership/payment-complete?membershipId=${membershipId}`
+    const origin = new URL(request.url).origin
+    const webhookUrl = `${origin}/api/payments/webhook`
+    const cardToken = membership.accessToken || ''
+    const successUrl = returnUrl || `${origin}/membership/card/${membershipId}?token=${encodeURIComponent(cardToken)}&paid=1`
     
+    const chargedMethod = membership.paymentMethod === 'OPEN_BANKING' ? 'OPEN_BANKING' : 'CARD'
+
     const paymentResult = await pixlPay.initiatePayment({
       amount: subscriptionPlan.price,
       currency: subscriptionPlan.currency,
-      paymentMethod: membership.paymentMethod || 'CARD',
+      paymentMethod: chargedMethod,
       reference: membershipId,
       description: `Membership: ${subscriptionPlan.name} for ${member.name}`,
       customerEmail: member.email,
       webhookUrl,
       successUrl,
-      cancelUrl: `${baseUrl}/membership/register?cancelled=true`,
+      cancelUrl: `${origin}/membership/register?cancelled=true`,
       metadata: {
         membershipId,
         memberId: member.id,
@@ -63,7 +73,7 @@ export async function POST(request: NextRequest) {
       membershipId,
       amount: subscriptionPlan.price,
       currency: subscriptionPlan.currency,
-      paymentMethod: membership.paymentMethod || 'CARD',
+      paymentMethod: chargedMethod,
       provider: 'PIXL_PAY',
       externalId: paymentResult.paymentId,
       status: 'PENDING',
@@ -78,6 +88,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       paymentId: paymentResult.paymentId,
       paymentUrl: paymentResult.paymentUrl,
+      redirectUrl: paymentResult.paymentUrl,
       expiresAt: paymentResult.expiresAt
     })
   } catch (error) {

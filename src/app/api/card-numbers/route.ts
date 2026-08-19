@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { membershipNumbersCollection, membersCollection } from '@/lib/db'
+import {
+  membershipNumbersCollection,
+  membershipsCollection,
+  membersCollection,
+  cardIssuancesCollection,
+} from '@/lib/db'
 import { cardNumberImportSchema } from '@/lib/validation'
+import { formatMagstripeData, getMagstripePrefix } from '@/lib/settings'
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,9 +21,47 @@ export async function GET(request: NextRequest) {
       batchId: batchId || undefined,
       take: limit,
     })
+
+    const magstripePrefix = await getMagstripePrefix()
+    const cardNumbers = await Promise.all(
+      numbers.map(async (number) => {
+        const magstripeData = await formatMagstripeData(number.cardNumber)
+        if (!number.isAssigned) {
+          return { ...number, magstripeData, membership: null, cardIssuance: null }
+        }
+
+        const linked = await membershipsCollection.findByMembershipNumberId(number.id)
+        const membership =
+          linked.find((item) => item.status === 'ACTIVE') ||
+          linked.find((item) => item.status === 'PAID') ||
+          linked[0] ||
+          null
+
+        if (!membership) {
+          return { ...number, magstripeData, membership: null, cardIssuance: null }
+        }
+
+        const [member, cardIssuance] = await Promise.all([
+          membersCollection.findById(membership.memberId),
+          cardIssuancesCollection.findByMembershipId(membership.id),
+        ])
+
+        return {
+          ...number,
+          magstripeData,
+          membership: member
+            ? { id: membership.id, status: membership.status, cardType: membership.cardType, member }
+            : null,
+          cardIssuance: cardIssuance
+            ? { id: cardIssuance.id, queueStatus: cardIssuance.queueStatus }
+            : null,
+        }
+      })
+    )
     
     return NextResponse.json({
-      cardNumbers: numbers,
+      cardNumbers,
+      magstripePrefix,
       stats,
       pagination: {
         page,

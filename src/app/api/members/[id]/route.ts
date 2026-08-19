@@ -92,7 +92,7 @@ export async function DELETE(
     
     if (memberships.length > 0) {
       return NextResponse.json(
-        { error: 'Cannot delete member with active memberships' },
+        { error: 'Cannot delete member while they still have memberships. Delete the memberships first to return cards to stock.' },
         { status: 400 }
       )
     }

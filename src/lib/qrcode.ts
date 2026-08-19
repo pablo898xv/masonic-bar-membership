@@ -1,4 +1,5 @@
 import QRCode from 'qrcode'
+import { getMagstripePrefix } from './settings'
 
 export interface QRCodeOptions {
   width?: number
@@ -70,10 +71,11 @@ export async function generateQRCodeSVG(
 }
 
 /**
- * Format membership card number for QR encoding
- * Uses the same prefix as magstripe for consistency
+ * Format membership card number for QR encoding.
+ * Till scanners expect ISO Track 2 sentinels: ;payload?
  */
-export function formatMembershipQRData(cardNumber: number): string {
-  const prefix = process.env.MAGSTRIPE_PREFIX || ';9998'
-  return `${prefix}${cardNumber}`
+export async function formatMembershipQRData(cardNumber: number): Promise<string> {
+  const prefix = await getMagstripePrefix()
+  const payload = `${prefix}${cardNumber}`.trim().replace(/^[%;+]/, '').replace(/\?+$/, '')
+  return `;${payload}?`
 }

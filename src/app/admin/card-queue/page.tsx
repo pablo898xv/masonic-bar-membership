@@ -5,6 +5,8 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
+import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
+import { isMsrx6Cancelled } from '@/lib/msrx6/device'
 
 interface CardIssuance {
   id: string
@@ -58,15 +60,26 @@ export default function CardQueuePage() {
   const [selectedCard, setSelectedCard] = useState<CardIssuance | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
   const [showInstructions, setShowInstructions] = useState(false)
+  const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
+  const writer = useMsrx6()
+
+  const closeEncodeModal = () => {
+    void writer.cancelOperation()
+    setSelectedCard(null)
+    setEncodeMessage(null)
+    setActionLoading(false)
+  }
 
   const fetchQueue = async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/card-issuance/queue?includeCompleted=false')
       const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to fetch queue')
       setQueueData(data)
     } catch (error) {
       console.error('Error fetching queue:', error)
+      setQueueData(null)
     } finally {
       setLoading(false)
     }
@@ -76,22 +89,50 @@ export default function CardQueuePage() {
     fetchQueue()
   }, [])
 
+  const markEncoded = async (issuance: CardIssuance, encodedBy: string, notes: string) => {
+    const res = await fetch(`/api/card-issuance/${issuance.id}/encode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ encodedBy, notes })
+    })
+
+    if (!res.ok) throw new Error('Failed to mark as encoded')
+    await fetchQueue()
+    setSelectedCard(null)
+    setEncodeMessage(null)
+  }
+
   const handleEncode = async (issuance: CardIssuance) => {
     setActionLoading(true)
     try {
-      const res = await fetch(`/api/card-issuance/${issuance.id}/encode`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ encodedBy: 'Bar Manager' })
-      })
-
-      if (!res.ok) throw new Error('Failed to mark as encoded')
-      
-      await fetchQueue()
-      setSelectedCard(null)
+      await markEncoded(issuance, 'Bar Manager', 'Marked encoded manually')
     } catch (error) {
       console.error('Error encoding card:', error)
       alert('Failed to mark card as encoded')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleWriterEncode = async (issuance: CardIssuance) => {
+    setActionLoading(true)
+    setEncodeMessage('Sending write command. Swipe the blank card through the MSRx6 now.')
+    try {
+      await writer.encodeCard(issuance.magstripeData)
+      setEncodeMessage('Verified. Saving…')
+      await markEncoded(
+        issuance,
+        'MSRx6',
+        `MSRx6 ${writer.transport || 'bluetooth'} ${writer.coercivity}, verified`
+      )
+    } catch (error) {
+      if (isMsrx6Cancelled(error)) {
+        setEncodeMessage(null)
+        return
+      }
+      const message = error instanceof Error ? error.message : 'Writer encode failed'
+      setEncodeMessage(message)
+      writer.setError(message)
     } finally {
       setActionLoading(false)
     }
@@ -161,7 +202,7 @@ export default function CardQueuePage() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-bold text-yellow-600">{queueData?.summary.readyToEncode || 0}</p>
+              <p className="text-2xl font-bold text-yellow-600">{queueData?.summary?.readyToEncode || 0}</p>
               <p className="text-sm text-gray-500">Ready to Encode</p>
             </div>
           </CardContent>
@@ -169,7 +210,7 @@ export default function CardQueuePage() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-bold text-blue-600">{queueData?.summary.encoded || 0}</p>
+              <p className="text-2xl font-bold text-blue-600">{queueData?.summary?.encoded || 0}</p>
               <p className="text-sm text-gray-500">Ready to Issue</p>
             </div>
           </CardContent>
@@ -177,7 +218,7 @@ export default function CardQueuePage() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-bold text-gray-600">{queueData?.summary.pending || 0}</p>
+              <p className="text-2xl font-bold text-gray-600">{queueData?.summary?.pending || 0}</p>
               <p className="text-sm text-gray-500">Pending Payment</p>
             </div>
           </CardContent>
@@ -185,7 +226,7 @@ export default function CardQueuePage() {
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
-              <p className="text-2xl font-bold text-red-600">{queueData?.summary.actionRequired || 0}</p>
+              <p className="text-2xl font-bold text-red-600">{queueData?.summary?.actionRequired || 0}</p>
               <p className="text-sm text-gray-500">Action Required</p>
             </div>
           </CardContent>
@@ -203,11 +244,11 @@ export default function CardQueuePage() {
           </div>
         </CardHeader>
         <CardContent>
-          {queueData?.queue.readyToEncode.length === 0 ? (
+          {!queueData?.queue?.readyToEncode?.length ? (
             <p className="text-gray-500 text-center py-4">No cards waiting to be encoded</p>
           ) : (
             <div className="space-y-3">
-              {queueData?.queue.readyToEncode.map((issuance) => (
+              {queueData.queue.readyToEncode.map((issuance) => (
                 <div key={issuance.id} className="flex items-center justify-between p-4 bg-yellow-50 rounded-lg border border-yellow-200">
                   <div>
                     <p className="font-medium text-gray-900">{issuance.membership.member.name}</p>
@@ -218,8 +259,14 @@ export default function CardQueuePage() {
                       Encode: <span className="font-bold">{issuance.magstripeData}</span>
                     </p>
                   </div>
-                  <Button size="sm" onClick={() => setSelectedCard(issuance)}>
-                    Mark Encoded
+                  <Button size="sm" onClick={() => {
+                    setEncodeMessage(null)
+                    setSelectedCard(issuance)
+                    if (writer.connected) {
+                      void handleWriterEncode(issuance)
+                    }
+                  }}>
+                    {writer.connected ? 'Encode' : 'Mark Encoded'}
                   </Button>
                 </div>
               ))}
@@ -239,11 +286,11 @@ export default function CardQueuePage() {
           </div>
         </CardHeader>
         <CardContent>
-          {queueData?.queue.encoded.length === 0 ? (
+          {!queueData?.queue?.encoded?.length ? (
             <p className="text-gray-500 text-center py-4">No cards ready to issue</p>
           ) : (
             <div className="space-y-3">
-              {queueData?.queue.encoded.map((issuance) => (
+              {queueData.queue.encoded.map((issuance) => (
                 <div key={issuance.id} className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
                   <div>
                     <p className="font-medium text-gray-900">{issuance.membership.member.name}</p>
@@ -275,11 +322,11 @@ export default function CardQueuePage() {
           </div>
         </CardHeader>
         <CardContent>
-          {queueData?.queue.pending.length === 0 ? (
+          {!queueData?.queue?.pending?.length ? (
             <p className="text-gray-500 text-center py-4">No cards pending payment</p>
           ) : (
             <div className="space-y-3">
-              {queueData?.queue.pending.map((issuance) => (
+              {queueData.queue.pending.map((issuance) => (
                 <div key={issuance.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
                   <div>
                     <p className="font-medium text-gray-900">{issuance.membership.member.name}</p>
@@ -298,7 +345,7 @@ export default function CardQueuePage() {
       {/* Confirm Encode Modal */}
       <Modal
         isOpen={!!selectedCard && selectedCard.queueStatus === 'READY_TO_ENCODE'}
-        onClose={() => setSelectedCard(null)}
+        onClose={closeEncodeModal}
         title="Confirm Card Encoding"
       >
         {selectedCard && (
@@ -308,22 +355,41 @@ export default function CardQueuePage() {
               <p className="font-medium">{selectedCard.membership.member.name}</p>
             </div>
             <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
-              <p className="text-sm text-yellow-700">Encode this data to Track 1:</p>
+              <p className="text-sm text-yellow-700">Track 2 data (till swipe):</p>
               <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">
                 {selectedCard.magstripeData}
               </p>
             </div>
             <p className="text-sm text-gray-600">
-              Use the card writer to encode the above data onto the physical card with number{' '}
-              <strong>{selectedCard.membership.membershipNumber.cardNumber}</strong> printed on the back.
+              Match the physical card numbered{' '}
+              <strong>{selectedCard.membership.membershipNumber.cardNumber}</strong> on the back.
+              {writer.connected
+                ? ' Swipe the blank card now. After a successful write you will swipe once more to verify.'
+                : ' Connect the MSRx6 from the bar at the top of the page, or write this data in EasyMSR and confirm here.'}
             </p>
+            {encodeMessage && (
+              <p className={`text-sm rounded-lg p-3 ${
+                actionLoading || writer.phase === 'writing' || writer.phase === 'verifying'
+                  ? 'bg-blue-50 text-blue-800 border border-blue-200'
+                  : 'bg-red-50 text-red-800 border border-red-200'
+              }`}>
+                {writer.phase === 'writing' && 'Swipe the blank card through the writer now. '}
+                {writer.phase === 'verifying' && 'Write succeeded. Swipe the same card again to verify. '}
+                {encodeMessage}
+              </p>
+            )}
             <div className="flex justify-end gap-3 pt-4">
-              <Button variant="secondary" onClick={() => setSelectedCard(null)}>
+              <Button variant="secondary" onClick={closeEncodeModal}>
                 Cancel
               </Button>
-              <Button onClick={() => handleEncode(selectedCard)} loading={actionLoading}>
-                Confirm Encoded
+              <Button variant="ghost" onClick={() => handleEncode(selectedCard)} loading={actionLoading}>
+                Mark encoded manually
               </Button>
+              {writer.connected && (
+                <Button onClick={() => handleWriterEncode(selectedCard)} loading={actionLoading}>
+                  {writer.phase === 'writing' || writer.phase === 'verifying' ? 'Waiting for swipe…' : 'Retry write'}
+                </Button>
+              )}
             </div>
           </div>
         )}
@@ -358,7 +424,7 @@ export default function CardQueuePage() {
               <li>Take the physical card matching the card number shown</li>
               <li>Connect the card writer to your computer</li>
               <li>Copy the magstripe data exactly as shown</li>
-              <li>Write the data to Track 1 of the card</li>
+              <li>Write the data to Track 2 of the card (or use Write with MSRx6 on this page)</li>
               <li>Click "Mark Encoded" to confirm</li>
             </ol>
           </div>

@@ -1,0 +1,58 @@
+# Local data plane matching Firebase Hosting / Firestore (same shape as live).
+# Next.js still runs on the host (`npm run dev`) — equivalent to Hosting + Cloud Functions.
+#
+#   bash deploy/local/setup.sh
+#   npm run dev
+#
+services:
+  firebase:
+    build:
+      context: ./deploy/local
+      dockerfile: Dockerfile.firebase
+    container_name: masonic-firebase
+    restart: unless-stopped
+    environment:
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-demo-masonic-bar}
+    volumes:
+      - ./deploy/local/firebase.json:/firebase/firebase.json:ro
+      - ./.firebaserc:/firebase/.firebaserc:ro
+      - ./firestore.rules:/firebase/firestore.rules:ro
+      - ./firestore.indexes.json:/firebase/firestore.indexes.json:ro
+      - firebase_data:/firebase/data
+      - firebase_cache:/root/.cache/firebase
+    ports:
+      - "127.0.0.1:4000:4000"   # Emulator UI
+      - "127.0.0.1:8080:8080"   # Firestore
+      - "127.0.0.1:9099:9099"   # Auth
+      - "127.0.0.1:4400:4400"   # Hub
+      - "127.0.0.1:4500:4500"   # Logging
+      - "127.0.0.1:9150:9150"   # Firestore UI websocket
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    stop_grace_period: 1m
+    networks:
+      - masonic_private
+
+  # SMTP stand-in for production mail. Bound on 1125/8125 so it does not clash
+  # with Pixl Payments Mailpit (1025/8025).
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: masonic-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1125:1025"
+      - "127.0.0.1:8125:8025"
+    networks:
+      - masonic_private
+
+networks:
+  masonic_private:
+    driver: bridge
+
+volumes:
+  firebase_data:
+  firebase_cache:

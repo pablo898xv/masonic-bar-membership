@@ -33,6 +33,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
   const [selectedPlan, setSelectedPlan] = useState('')
   const [cardType, setCardType] = useState('QR_CODE')
   const [paymentMethod, setPaymentMethod] = useState('CARD')
+  const isComplimentary = paymentMethod === 'COMPLIMENTARY'
 
   useEffect(() => {
     async function fetchData() {
@@ -73,7 +74,8 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
           memberId: resolvedParams.id,
           subscriptionPlanId: selectedPlan,
           cardType,
-          paymentMethod
+          paymentMethod,
+          adminIssued: true
         })
       })
 
@@ -83,6 +85,11 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
       }
 
       const data = await res.json()
+
+      if (isComplimentary || data.complimentary) {
+        router.push(`/admin/members/${resolvedParams.id}`)
+        return
+      }
       
       const paymentRes = await fetch('/api/payments/initiate', {
         method: 'POST',
@@ -95,11 +102,12 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
       }
 
       const paymentData = await paymentRes.json()
-      
-      if (paymentData.redirectUrl) {
-        window.location.href = paymentData.redirectUrl
+      const checkoutUrl = paymentData.redirectUrl || paymentData.paymentUrl
+
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl
       } else {
-        router.push(`/admin/memberships/${data.membership.id}`)
+        router.push(`/admin/members/${resolvedParams.id}`)
       }
     } catch (err: any) {
       setError(err.message)
@@ -205,25 +213,32 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                   onChange={(e) => setPaymentMethod(e.target.value)}
                   options={[
                     { value: 'CARD', label: 'Card Payment (Dojo)' },
-                    { value: 'OPEN_BANKING', label: 'Open Banking' }
+                    { value: 'OPEN_BANKING', label: 'Open Banking' },
+                    { value: 'COMPLIMENTARY', label: 'Complimentary (no charge)' }
                   ]}
                 />
+
+                {isComplimentary && (
+                  <p className="text-sm text-blue-800 bg-blue-50 p-3 rounded-lg">
+                    Complimentary memberships are not charged. The membership will be activated immediately and the card will go to the encode queue.
+                  </p>
+                )}
 
                 {selectedPlanDetails && (
                   <div className="mt-6 p-4 bg-gray-50 rounded-lg">
                     <h3 className="font-medium text-gray-900">Order Summary</h3>
                     <div className="mt-2 flex justify-between">
                       <span className="text-gray-600">{selectedPlanDetails.name}</span>
-                      <span className="font-semibold">£{selectedPlanDetails.price.toFixed(2)}</span>
+                      <span className="font-semibold">
+                        {isComplimentary ? 'Complimentary' : `£${selectedPlanDetails.price.toFixed(2)}`}
+                      </span>
                     </div>
                     <div className="mt-1 text-sm text-gray-500">
                       Valid for {selectedPlanDetails.durationYears} year{selectedPlanDetails.durationYears > 1 ? 's' : ''}
                     </div>
-                    {cardType === 'PHYSICAL_CARD' && (
-                      <p className="mt-2 text-sm text-yellow-700 bg-yellow-50 p-2 rounded">
-                        Physical card will be added to the encoding queue after payment
-                      </p>
-                    )}
+                    <p className="mt-2 text-sm text-yellow-700 bg-yellow-50 p-2 rounded">
+                      The card will be added to the encoding queue{isComplimentary ? '' : ' after payment'}
+                    </p>
                   </div>
                 )}
               </>
@@ -235,7 +250,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                 Cancel
               </Button>
               <Button type="submit" loading={submitting}>
-                Proceed to Payment
+                {isComplimentary ? 'Issue Complimentary Membership' : 'Proceed to Payment'}
               </Button>
             </CardFooter>
           )}

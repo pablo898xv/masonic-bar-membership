@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { membershipsCollection, subscriptionPlansCollection, cardIssuancesCollection } from '@/lib/db'
+import { membershipsCollection } from '@/lib/db'
+import { fulfillPaidMembership } from '@/lib/fulfill-membership'
 
 export async function POST(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -20,32 +21,8 @@ export async function POST(
         { status: 400 }
       )
     }
-    
-    const subscriptionPlan = await subscriptionPlansCollection.findById(membership.subscriptionPlanId)
-    
-    if (!subscriptionPlan) {
-      return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
-    }
-    
-    const now = new Date()
-    const expiryDate = new Date(now)
-    expiryDate.setFullYear(expiryDate.getFullYear() + subscriptionPlan.durationYears)
-    
-    const updatedMembership = await membershipsCollection.update(id, {
-      status: 'ACTIVE',
-      startDate: now,
-      expiryDate,
-    })
-    
-    if (membership.cardType === 'PHYSICAL_CARD') {
-      const cardIssuance = await cardIssuancesCollection.findByMembershipId(id)
-      
-      if (cardIssuance) {
-        await cardIssuancesCollection.update(cardIssuance.id, {
-          queueStatus: 'READY_TO_ENCODE'
-        })
-      }
-    }
+
+    await fulfillPaidMembership(id)
     
     const result = await membershipsCollection.findByIdWithRelations(id)
     

@@ -80,27 +80,29 @@ firebase deploy --only firestore
 
 ## Local Development
 
-```bash
-# Install dependencies
-npm install
+This matches the live Firebase Hosting + Firestore shape, the same way Pixl Payments mirrors GCP in Docker. Next.js on the host is the Hosting / Cloud Functions stand-in.
 
-# Run development server
+| Live (Firebase / GCP) | Local (Docker) |
+|-----------------------|----------------|
+| Firestore | Firestore emulator (`masonic-firebase`, port 8080) |
+| Firebase Auth | Auth emulator (port 9099) |
+| Firebase Hosting + Cloud Functions | `npm run dev` on the host (port 3000) |
+| Production mail | Mailpit at [http://127.0.0.1:8125](http://127.0.0.1:8125) |
+
+```bash
+# One-time / everyday bootstrap
+bash deploy/local/setup.sh
+# or: npm run local:setup
+
+# Run the app (Hosting equivalent)
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
-
-### Using Firebase Emulators (Recommended for Development)
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Emulator UI: [http://127.0.0.1:4000](http://127.0.0.1:4000).
 
 ```bash
-# Install Firebase CLI if not already installed
-npm install -g firebase-tools
-
-# Start emulators
-firebase emulators:start
-
-# Set environment variable to use emulator
-FIRESTORE_EMULATOR_HOST=localhost:8080
+# Reset emulator data
+bash deploy/local/setup.sh --reset-volumes
 ```
 
 ## Deployment to Firebase

@@ -35,6 +35,10 @@ export async function POST(
     
     const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
     
+    if (membership.cardType === 'QR_CODE') {
+      await membershipsCollection.update(membership.id, { cardType: 'BOTH' })
+    }
+
     await cardIssuancesCollection.update(id, {
       queueStatus: 'ISSUED',
       issuedAt: new Date(),

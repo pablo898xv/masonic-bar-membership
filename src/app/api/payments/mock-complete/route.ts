@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { 
-  membershipsCollection, 
-  subscriptionPlansCollection,
-  cardIssuancesCollection,
-  paymentTransactionsCollection 
-} from '@/lib/db'
+import { membershipsCollection, subscriptionPlansCollection, paymentTransactionsCollection } from '@/lib/db'
+import { fulfillPaidMembership } from '@/lib/fulfill-membership'
 
 export async function POST(request: NextRequest) {
   try {
@@ -17,51 +13,29 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
-    let paymentStatus: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'REFUNDED' = 'PENDING'
-    let membershipStatus = membership.status
-    
     if (status === 'success') {
-      paymentStatus = 'COMPLETED'
-      membershipStatus = 'PAID'
+      await fulfillPaidMembership(membershipId)
       
-      const subscriptionPlan = await subscriptionPlansCollection.findById(membership.subscriptionPlanId)
-      
-      if (subscriptionPlan) {
-        const now = new Date()
-        const expiryDate = new Date(now)
-        expiryDate.setFullYear(expiryDate.getFullYear() + subscriptionPlan.durationYears)
-        
-        await membershipsCollection.update(membershipId, {
-          status: 'ACTIVE',
-          paymentStatus: 'COMPLETED',
-          startDate: now,
-          expiryDate
+      if (membership.paymentId) {
+        await paymentTransactionsCollection.updateByExternalId(membership.paymentId, {
+          status: 'COMPLETED',
         })
-        
-        if (membership.cardType === 'PHYSICAL_CARD') {
-          const cardIssuance = await cardIssuancesCollection.findByMembershipId(membershipId)
-          
-          if (cardIssuance) {
-            await cardIssuancesCollection.update(cardIssuance.id, {
-              queueStatus: 'READY_TO_ENCODE'
-            })
-          }
-        }
       }
-    } else {
-      paymentStatus = 'FAILED'
-      await membershipsCollection.update(membershipId, {
-        paymentStatus: 'FAILED'
-      })
+
+      return NextResponse.json({ success: true, status: 'COMPLETED' })
     }
-    
+
+    await membershipsCollection.update(membershipId, {
+      paymentStatus: 'FAILED',
+    })
+
     if (membership.paymentId) {
       await paymentTransactionsCollection.updateByExternalId(membership.paymentId, {
-        status: paymentStatus
+        status: 'FAILED',
       })
     }
-    
-    return NextResponse.json({ success: true, status: paymentStatus })
+
+    return NextResponse.json({ success: true, status: 'FAILED' })
   } catch (error) {
     console.error('Error completing mock payment:', error)
     return NextResponse.json({ error: 'Failed to complete payment' }, { status: 500 })

@@ -21,13 +21,14 @@ function PaymentCompleteContent() {
       
       try {
         const res = await fetch(`/api/memberships/${membershipId}`)
-        const data = await res.json()
+        const payload = await res.json()
+        const data = payload.membership
+          ? { ...payload.membership, membershipNumber: payload.membershipNumber, subscriptionPlan: payload.subscriptionPlan }
+          : payload
         setMembership(data)
         
-        if (data.cardType === 'QR_CODE' && data.status === 'ACTIVE') {
-          const qrRes = await fetch(`/api/memberships/${membershipId}/wallet-pass?format=qrcode`)
-          const qrData = await qrRes.json()
-          setQrCode(qrData.qrCodeImage)
+        if (data.status === 'ACTIVE' && (data.cardType === 'QR_CODE' || data.cardType === 'BOTH' || data.digitalCardPath)) {
+          setQrCode(`/api/memberships/${membershipId}/wallet-pass?format=qrcode`)
         }
       } catch (error) {
         console.error('Error fetching membership:', error)
@@ -94,7 +95,7 @@ function PaymentCompleteContent() {
                   </div>
                 </div>
 
-                {membership.cardType === 'QR_CODE' && qrCode && (
+                {(membership.cardType === 'QR_CODE' || membership.cardType === 'BOTH') && qrCode && (
                   <div className="text-center">
                     <p className="text-sm text-gray-500 mb-4">
                       Show this QR code at the bar to use your membership
@@ -115,13 +116,13 @@ function PaymentCompleteContent() {
                         Download QR Code
                       </Button>
                       <p className="text-xs text-gray-500">
-                        Apple Wallet pass requires additional configuration
+                        Apple Wallet and Google Wallet can be enabled in Settings after your issuer accounts are approved.
                       </p>
                     </div>
                   </div>
                 )}
 
-                {membership.cardType === 'PHYSICAL_CARD' && (
+                {(membership.cardType === 'PHYSICAL_CARD' || membership.cardType === 'BOTH') && (
                   <div className="p-4 bg-yellow-50 rounded-lg text-center">
                     <svg className="mx-auto w-12 h-12 text-yellow-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />

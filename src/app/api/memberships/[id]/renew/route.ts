@@ -7,8 +7,8 @@ import {
   cardIssuancesCollection,
   Membership
 } from '@/lib/db'
-
-const MAGSTRIPE_PREFIX = process.env.MAGSTRIPE_PREFIX || ';9998'
+import { v4 as uuidv4 } from 'uuid'
+import { formatMagstripeData } from '@/lib/settings'
 
 export async function POST(
   request: NextRequest,
@@ -59,12 +59,13 @@ export async function POST(
       paymentMethod: paymentMethod || existingMembership.paymentMethod,
       paymentStatus: 'PENDING',
       tillSystemEnabled: false,
+      accessToken: uuidv4(),
     }
     
     const newMembership = await membershipsCollection.create(membershipData)
     
     if (existingMembership.cardType === 'PHYSICAL_CARD') {
-      const magstripeData = `${MAGSTRIPE_PREFIX}${membershipNumber.cardNumber}`
+      const magstripeData = await formatMagstripeData(membershipNumber.cardNumber)
       
       await cardIssuancesCollection.create({
         membershipId: newMembership.id,

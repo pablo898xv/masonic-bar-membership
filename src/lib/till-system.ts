@@ -1,15 +1,10 @@
+import { getAppSettings } from './settings'
+
 /**
  * Till System Integration Module
- * 
- * This module provides integration with the external till system
- * that manages access control for the Masonic Hall Bar.
- * 
- * The till system needs to be notified when a membership card is activated
- * so that the card can be used for access/payment at the bar.
- * 
- * Configuration required:
- * - TILL_SYSTEM_API_URL: Base URL of the till system API
- * - TILL_SYSTEM_API_KEY: API key for authentication
+ *
+ * Configuration can be saved on the admin Settings page, with environment
+ * variables used as a fallback.
  */
 
 export interface TillSystemCard {
@@ -33,12 +28,13 @@ export interface TillSystemResponse {
 }
 
 class TillSystemClient {
-  private baseUrl: string
-  private apiKey: string
+  private baseUrl = ''
+  private apiKey = ''
 
-  constructor() {
-    this.baseUrl = process.env.TILL_SYSTEM_API_URL || ''
-    this.apiKey = process.env.TILL_SYSTEM_API_KEY || ''
+  private async load() {
+    const settings = await getAppSettings()
+    this.baseUrl = settings.tillSystemApiUrl
+    this.apiKey = settings.tillSystemApiKey
   }
 
   private get headers() {
@@ -51,7 +47,8 @@ class TillSystemClient {
   /**
    * Check if the till system is configured
    */
-  isConfigured(): boolean {
+  async isConfigured(): Promise<boolean> {
+    await this.load()
     return !!(this.baseUrl && this.apiKey)
   }
 
@@ -63,7 +60,7 @@ class TillSystemClient {
    * 2. A physical card is issued to the member
    */
   async enableCard(card: TillSystemCard): Promise<TillSystemResponse> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Till system not configured, returning mock response')
       return this.mockEnableCard(card)
     }
@@ -113,7 +110,7 @@ class TillSystemClient {
    * 3. A card is reported lost/stolen
    */
   async disableCard(request: TillSystemDisableRequest): Promise<TillSystemResponse> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Till system not configured, returning mock response')
       return { success: true, message: 'Card disabled (mock)', status: 'INACTIVE' }
     }
@@ -154,7 +151,7 @@ class TillSystemClient {
    * Check the status of a card in the till system
    */
   async getCardStatus(cardNumber: string): Promise<TillSystemResponse> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Till system not configured, returning mock response')
       return { success: true, message: 'Status check (mock)', status: 'INACTIVE', data: {} }
     }
@@ -193,7 +190,7 @@ class TillSystemClient {
    * Extend the validity of a card (for renewals)
    */
   async extendCard(cardNumber: string, newValidUntil: Date): Promise<TillSystemResponse> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Till system not configured, returning mock response')
       return { success: true, message: 'Card extended (mock)', status: 'ACTIVE' }
     }

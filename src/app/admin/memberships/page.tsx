@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import Link from 'next/link'
 import { format } from 'date-fns'
+import { cardTypeLabel, hasDigitalCard } from '@/lib/card-type'
 
 interface Membership {
   id: string
@@ -116,7 +117,8 @@ export default function MembershipsPage() {
               options={[
                 { value: '', label: 'All Card Types' },
                 { value: 'QR_CODE', label: 'QR Code' },
-                { value: 'PHYSICAL_CARD', label: 'Physical Card' }
+                { value: 'PHYSICAL_CARD', label: 'Physical Card' },
+                { value: 'BOTH', label: 'QR + Physical' }
               ]}
               className="w-48"
             />
@@ -165,8 +167,8 @@ export default function MembershipsPage() {
                           {membership.subscriptionPlan.name}
                         </td>
                         <td className="py-3 px-4">
-                          <Badge variant={membership.cardType === 'QR_CODE' ? 'info' : 'default'}>
-                            {membership.cardType === 'QR_CODE' ? 'QR Code' : 'Physical'}
+                          <Badge variant={hasDigitalCard(membership.cardType) ? 'info' : 'default'}>
+                            {cardTypeLabel(membership.cardType)}
                           </Badge>
                         </td>
                         <td className="py-3 px-4">
@@ -200,7 +202,7 @@ export default function MembershipsPage() {
                             >
                               View
                             </Link>
-                            {membership.status === 'ACTIVE' && membership.cardType === 'QR_CODE' && (
+                            {membership.status === 'ACTIVE' && hasDigitalCard(membership.cardType) && (
                               <Link
                                 href={`/api/memberships/${membership.id}/wallet-pass?format=qrcode`}
                                 target="_blank"

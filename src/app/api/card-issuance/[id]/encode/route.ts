@@ -8,7 +8,7 @@ export async function POST(
   try {
     const { id } = await params
     const body = await request.json()
-    const { encodedBy } = body
+    const { encodedBy, notes } = body
     
     const issuance = await cardIssuancesCollection.findById(id)
     
@@ -34,8 +34,13 @@ export async function POST(
     const updatedIssuance = await cardIssuancesCollection.update(id, {
       queueStatus: 'ENCODED',
       encodedAt: new Date(),
-      encodedBy: encodedBy || 'System'
+      encodedBy: encodedBy || 'System',
+      ...(typeof notes === 'string' && notes ? { notes } : {}),
     })
+
+    if (membership.cardType === 'QR_CODE') {
+      await membershipsCollection.update(membership.id, { cardType: 'BOTH' })
+    }
     
     return NextResponse.json(updatedIssuance)
   } catch (error) {

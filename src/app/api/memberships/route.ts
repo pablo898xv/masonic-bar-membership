@@ -5,11 +5,29 @@ import {
   membershipNumbersCollection, 
   subscriptionPlansCollection,
   cardIssuancesCollection,
+  paymentTransactionsCollection,
   Membership
 } from '@/lib/db'
 import { membershipPurchaseSchema } from '@/lib/validation'
+import { fulfillPaidMembership } from '@/lib/fulfill-membership'
+import { formatMagstripeData } from '@/lib/settings'
+import { v4 as uuidv4 } from 'uuid'
 
-const MAGSTRIPE_PREFIX = process.env.MAGSTRIPE_PREFIX || ';9998'
+async function nextCardNumber() {
+  const existing = await membershipNumbersCollection.findFirstAvailable()
+  if (existing) return existing
+
+  const local = process.env.FIRESTORE_EMULATOR_HOST || process.env.USE_LOCAL_DB === 'true'
+  if (!local) return null
+
+  await membershipNumbersCollection.createMany(
+    Array.from({ length: 200 }, (_, index) => ({
+      cardNumber: 1500 + index,
+      batchId: 'local-seed',
+    }))
+  )
+  return membershipNumbersCollection.findFirstAvailable()
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -64,7 +82,14 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const { memberId, subscriptionPlanId, cardType, paymentMethod } = validation.data
+    const { memberId, subscriptionPlanId, cardType, paymentMethod, adminIssued } = validation.data
+
+    if (paymentMethod === 'COMPLIMENTARY' && adminIssued !== true) {
+      return NextResponse.json(
+        { error: 'Complimentary memberships can only be issued by an admin' },
+        { status: 403 }
+      )
+    }
     
     const [member, subscriptionPlan] = await Promise.all([
       membersCollection.findById(memberId),
@@ -79,7 +104,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Subscription plan not found or inactive' }, { status: 404 })
     }
     
-    const availableNumber = await membershipNumbersCollection.findFirstAvailable()
+    const availableNumber = await nextCardNumber()
     
     if (!availableNumber) {
       return NextResponse.json(
@@ -93,27 +118,50 @@ export async function POST(request: NextRequest) {
       assignedAt: new Date()
     })
     
+    const isComplimentary = paymentMethod === 'COMPLIMENTARY'
     const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
       memberId,
       membershipNumberId: availableNumber.id,
       subscriptionPlanId,
       cardType: cardType as 'QR_CODE' | 'PHYSICAL_CARD',
-      status: 'PENDING_PAYMENT',
-      paymentMethod: paymentMethod as 'CARD' | 'OPEN_BANKING',
-      paymentStatus: 'PENDING',
+      status: isComplimentary ? 'PAID' : 'PENDING_PAYMENT',
+      paymentMethod,
+      paymentStatus: isComplimentary ? 'COMPLETED' : 'PENDING',
       tillSystemEnabled: false,
+      accessToken: uuidv4(),
     }
     
     const membership = await membershipsCollection.create(membershipData)
     
     if (cardType === 'PHYSICAL_CARD') {
-      const magstripeData = `${MAGSTRIPE_PREFIX}${availableNumber.cardNumber}`
+      const magstripeData = await formatMagstripeData(availableNumber.cardNumber)
       
       await cardIssuancesCollection.create({
         membershipId: membership.id,
-        queueStatus: 'PENDING',
+        queueStatus: isComplimentary ? 'READY_TO_ENCODE' : 'PENDING',
         magstripeData,
       })
+    }
+
+    if (isComplimentary) {
+      await paymentTransactionsCollection.create({
+        membershipId: membership.id,
+        amount: 0,
+        currency: subscriptionPlan.currency,
+        paymentMethod: 'COMPLIMENTARY',
+        provider: 'COMPLIMENTARY',
+        status: 'COMPLETED',
+        metadata: { issuedBy: 'admin', reason: 'complimentary' },
+      })
+
+      await fulfillPaidMembership(membership.id)
+
+      const result = await membershipsCollection.findByIdWithRelations(membership.id)
+      return NextResponse.json({
+        ...result,
+        complimentary: true,
+        paymentRequired: null,
+      }, { status: 201 })
     }
     
     const result = await membershipsCollection.findByIdWithRelations(membership.id)

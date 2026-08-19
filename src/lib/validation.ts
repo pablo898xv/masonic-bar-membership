@@ -20,7 +20,8 @@ export const membershipPurchaseSchema = z.object({
   memberId: z.string().min(1, 'Member ID is required'),
   subscriptionPlanId: z.string().min(1, 'Subscription plan ID is required'),
   cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD']),
-  paymentMethod: z.enum(['CARD', 'OPEN_BANKING']),
+  paymentMethod: z.enum(['CARD', 'OPEN_BANKING', 'COMPLIMENTARY']),
+  adminIssued: z.boolean().optional(),
 })
 
 export const cardNumberImportSchema = z.object({
@@ -44,6 +45,31 @@ export const adminCreateSchema = z.object({
   password: z.string().min(8, 'Password must be at least 8 characters'),
   name: z.string().min(2, 'Name must be at least 2 characters'),
   role: z.enum(['ADMIN', 'MANAGER']).default('MANAGER'),
+})
+
+export const appSettingsUpdateSchema = z.object({
+  magstripePrefix: z.string().min(1).max(32).optional(),
+  pixlPayApiUrl: z.string().optional(),
+  pixlPayApiKey: z.string().optional(),
+  pixlPayMerchantId: z.string().optional(),
+  pixlPayWebhookSecret: z.string().optional(),
+  tillSystemApiUrl: z.string().optional(),
+  tillSystemApiKey: z.string().optional(),
+  smtpHost: z.string().optional(),
+  smtpPort: z.string().optional(),
+  smtpSecure: z.enum(['true', 'false']).optional(),
+  smtpUser: z.string().optional(),
+  smtpPass: z.string().optional(),
+  emailFrom: z.string().optional(),
+  passTypeIdentifier: z.string().optional(),
+  teamIdentifier: z.string().optional(),
+  passCertificatePath: z.string().optional(),
+  passCertificatePassword: z.string().optional(),
+  googleWalletIssuerId: z.string().optional(),
+  googleWalletClassSuffix: z.string().optional(),
+  googleWalletServiceAccountPath: z.string().optional(),
+  googleWalletServiceAccountJson: z.string().optional(),
+  googleWalletLogoUrl: z.string().optional(),
 })
 
 export type MemberInput = z.infer<typeof memberSchema>

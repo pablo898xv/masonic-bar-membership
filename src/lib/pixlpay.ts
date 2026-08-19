@@ -1,13 +1,10 @@
+import { getAppSettings } from './settings'
+
 /**
  * Pixl Pay Integration Module
- * 
- * This module provides integration with the Pixl Pay payment platform.
- * It supports both card payments (via Dojo) and open banking payments.
- * 
- * Configuration required:
- * - PIXL_PAY_API_URL: Base URL of the Pixl Pay API
- * - PIXL_PAY_API_KEY: API key for authentication
- * - PIXL_PAY_MERCHANT_ID: Merchant ID for the Masonic Hall Bar
+ *
+ * Configuration can be saved on the admin Settings page, with environment
+ * variables used as a fallback.
  */
 
 export interface PaymentRequest {
@@ -53,16 +50,17 @@ export interface WebhookPayload {
 }
 
 class PixlPayClient {
-  private baseUrl: string
-  private apiKey: string
-  private merchantId: string
-  private webhookSecret: string
+  private baseUrl = ''
+  private apiKey = ''
+  private merchantId = ''
+  private webhookSecret = ''
 
-  constructor() {
-    this.baseUrl = process.env.PIXL_PAY_API_URL || ''
-    this.apiKey = process.env.PIXL_PAY_API_KEY || ''
-    this.merchantId = process.env.PIXL_PAY_MERCHANT_ID || ''
-    this.webhookSecret = process.env.PIXL_PAY_WEBHOOK_SECRET || ''
+  private async load() {
+    const settings = await getAppSettings()
+    this.baseUrl = settings.pixlPayApiUrl
+    this.apiKey = settings.pixlPayApiKey
+    this.merchantId = settings.pixlPayMerchantId
+    this.webhookSecret = settings.pixlPayWebhookSecret
   }
 
   private get headers() {
@@ -76,7 +74,8 @@ class PixlPayClient {
   /**
    * Check if Pixl Pay is configured
    */
-  isConfigured(): boolean {
+  async isConfigured(): Promise<boolean> {
+    await this.load()
     return !!(this.baseUrl && this.apiKey)
   }
 
@@ -87,7 +86,7 @@ class PixlPayClient {
    * For open banking, this will redirect to the bank selection page
    */
   async initiatePayment(request: PaymentRequest): Promise<PaymentResponse> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Pixl Pay not configured, returning mock response')
       return this.mockInitiatePayment(request)
     }
@@ -143,7 +142,7 @@ class PixlPayClient {
    * Check the status of a payment
    */
   async getPaymentStatus(paymentId: string): Promise<PaymentStatus | null> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Pixl Pay not configured, returning mock status')
       return this.mockGetPaymentStatus(paymentId)
     }
@@ -177,7 +176,8 @@ class PixlPayClient {
   /**
    * Verify webhook payload and signature
    */
-  verifyWebhook(payload: unknown, signature: string): boolean {
+  async verifyWebhook(payload: unknown, signature: string): Promise<boolean> {
+    await this.load()
     if (!this.webhookSecret) {
       console.warn('Pixl Pay webhook secret not configured, skipping signature verification')
       return true
@@ -199,12 +199,16 @@ class PixlPayClient {
    */
   private mockInitiatePayment(request: PaymentRequest): PaymentResponse {
     const mockPaymentId = `mock_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-    
+    const checkout = new URLSearchParams({
+      membershipId: request.reference,
+      paymentId: mockPaymentId,
+    })
+    if (request.successUrl) checkout.set('returnUrl', request.successUrl)
+
     return {
       success: true,
       paymentId: mockPaymentId,
-      paymentUrl: `${baseUrl}/api/payments/mock-checkout?membershipId=${request.reference}&paymentId=${mockPaymentId}`,
+      paymentUrl: `/api/payments/mock-checkout?${checkout.toString()}`,
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
       metadata: request.metadata,
     }
@@ -223,7 +227,7 @@ class PixlPayClient {
    * Initiate a refund
    */
   async initiateRefund(paymentId: string, amount?: number): Promise<{ success: boolean; error?: string }> {
-    if (!this.isConfigured()) {
+    if (!(await this.isConfigured())) {
       console.warn('Pixl Pay not configured, returning mock refund response')
       return { success: true }
     }

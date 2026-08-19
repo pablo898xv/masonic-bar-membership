@@ -12,7 +12,7 @@ export default function Home() {
             </svg>
           </div>
           <h1 className="text-4xl font-bold text-white mb-4">
-            Masonic Hall Bar
+            Membership Manager
           </h1>
           <p className="text-xl text-slate-300">
             Membership Discount Card System

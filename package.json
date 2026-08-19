@@ -9,7 +9,9 @@
     "lint": "eslint",
     "deploy": "firebase deploy",
     "deploy:hosting": "firebase deploy --only hosting",
-    "deploy:firestore": "firebase deploy --only firestore"
+    "deploy:firestore": "firebase deploy --only firestore",
+    "local:setup": "bash deploy/local/setup.sh",
+    "emulators": "docker compose up -d"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

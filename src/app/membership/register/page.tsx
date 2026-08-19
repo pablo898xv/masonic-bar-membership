@@ -69,7 +69,7 @@ export default function RegisterPage() {
 
       let member
       if (memberRes.status === 409) {
-        const existingMemberRes = await fetch(`/api/members?search=${encodeURIComponent(formData.email)}`)
+        const existingMemberRes = await fetch(`/api/members?email=${encodeURIComponent(formData.email)}`)
         const existingData = await existingMemberRes.json()
         if (existingData.members?.length > 0) {
           member = existingData.members[0]
@@ -112,12 +112,13 @@ export default function RegisterPage() {
       }
 
       const paymentData = await paymentRes.json()
-      
-      if (paymentData.redirectUrl) {
-        window.location.href = paymentData.redirectUrl
-      } else {
-        router.push(`/membership/payment-complete?membershipId=${membershipData.membership.id}`)
+      const checkoutUrl = paymentData.redirectUrl || paymentData.paymentUrl
+
+      if (!checkoutUrl) {
+        throw new Error('Payment provider did not return a checkout URL')
       }
+
+      window.location.href = checkoutUrl
     } catch (err: any) {
       setError(err.message)
       setSubmitting(false)
@@ -139,7 +140,7 @@ export default function RegisterPage() {
       <div className="max-w-lg mx-auto">
         <div className="text-center mb-8">
           <Link href="/" className="text-2xl font-bold text-gray-900">
-            Masonic Hall Bar
+            Membership Manager
           </Link>
           <h1 className="text-xl text-gray-600 mt-2">Membership Registration</h1>
         </div>

@@ -8,6 +8,7 @@ import {
 } from '@/lib/db'
 import { generateQRCodeBuffer, formatMembershipQRData } from '@/lib/qrcode'
 import { generateWalletPass, isWalletPassConfigured } from '@/lib/wallet-pass'
+import { getAppSettings } from '@/lib/settings'
 import { v4 as uuidv4 } from 'uuid'
 
 export async function GET(
@@ -18,18 +19,16 @@ export async function GET(
     const { id } = await params
     const { searchParams } = new URL(request.url)
     const format = searchParams.get('format') || 'qr'
+    const token = searchParams.get('token')
     
     const membership = await membershipsCollection.findById(id)
     
     if (!membership) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
-    
-    if (membership.cardType !== 'QR_CODE') {
-      return NextResponse.json(
-        { error: 'Wallet pass only available for QR code memberships' },
-        { status: 400 }
-      )
+
+    if (token && membership.accessToken !== token) {
+      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
     if (membership.status !== 'ACTIVE') {
@@ -50,22 +49,27 @@ export async function GET(
     }
     
     let walletPass = await walletPassesCollection.findByMembershipId(id)
-    
+    const qrData = await formatMembershipQRData(membershipNumber.cardNumber)
+
     if (!walletPass) {
-      const qrData = formatMembershipQRData(membershipNumber.cardNumber)
-      
+      const settings = await getAppSettings()
       walletPass = await walletPassesCollection.create({
         membershipId: id,
-        passTypeId: process.env.APPLE_PASS_TYPE_ID || 'pass.com.masonicbar.membership',
+        passTypeId: settings.passTypeIdentifier || 'pass.com.masonicbar.membership',
         serialNumber: uuidv4(),
         authToken: uuidv4(),
         qrCodeData: qrData,
         lastUpdated: new Date()
       })
+    } else if (walletPass.qrCodeData !== qrData) {
+      await walletPassesCollection.update(walletPass.id, {
+        qrCodeData: qrData,
+        lastUpdated: new Date(),
+      })
     }
     
     if (format === 'pkpass') {
-      if (!isWalletPassConfigured()) {
+      if (!(await isWalletPassConfigured())) {
         return NextResponse.json(
           { error: 'Apple Wallet pass generation not configured' },
           { status: 501 }
@@ -87,7 +91,7 @@ export async function GET(
       }, { status: 501 })
     }
     
-    const qrBuffer = await generateQRCodeBuffer(walletPass.qrCodeData)
+    const qrBuffer = await generateQRCodeBuffer(qrData)
     
     return new NextResponse(new Uint8Array(qrBuffer), {
       headers: {

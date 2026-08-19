@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer'
+import { getAppSettings } from './settings'
 
 /**
  * Email Service Module
@@ -24,32 +25,34 @@ interface EmailOptions {
 }
 
 class EmailService {
-  private transporter: nodemailer.Transporter | null = null
+  private async transporter() {
+    const settings = await getAppSettings()
+    if (!settings.smtpHost) return null
 
-  constructor() {
-    if (this.isConfigured()) {
-      this.transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-      })
-    }
+    return nodemailer.createTransport({
+      host: settings.smtpHost,
+      port: parseInt(settings.smtpPort || '587', 10),
+      secure: settings.smtpSecure === 'true',
+      ...(settings.smtpUser
+        ? {
+            auth: {
+              user: settings.smtpUser,
+              pass: settings.smtpPass,
+            },
+          }
+        : {}),
+    })
   }
 
-  isConfigured(): boolean {
-    return !!(
-      process.env.SMTP_HOST &&
-      process.env.SMTP_USER &&
-      process.env.SMTP_PASS
-    )
+  async isConfigured(): Promise<boolean> {
+    const settings = await getAppSettings()
+    return Boolean(settings.smtpHost)
   }
 
   async sendEmail(options: EmailOptions): Promise<{ success: boolean; error?: string }> {
-    if (!this.isConfigured() || !this.transporter) {
+    const settings = await getAppSettings()
+    const transporter = await this.transporter()
+    if (!settings.smtpHost || !transporter) {
       console.log('Email not configured. Would send:', {
         to: options.to,
         subject: options.subject,
@@ -58,8 +61,8 @@ class EmailService {
     }
 
     try {
-      await this.transporter.sendMail({
-        from: process.env.EMAIL_FROM || 'Masonic Hall Bar <noreply@masonichall.bar>',
+      await transporter.sendMail({
+        from: settings.emailFrom || 'Membership Manager <noreply@masonichall.bar>',
         to: options.to,
         subject: options.subject,
         html: options.html,
@@ -100,14 +103,14 @@ class EmailService {
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
   <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">Masonic Hall Bar</h1>
+    <h1 style="color: white; margin: 0; font-size: 24px;">Membership Manager</h1>
     <p style="color: rgba(255,255,255,0.8); margin: 10px 0 0 0;">Membership Renewal Reminder</p>
   </div>
   
   <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none;">
     <p style="margin-top: 0;">Dear ${memberName},</p>
     
-    <p>We wanted to remind you that your membership at the Masonic Hall Bar will be expiring soon.</p>
+    <p>We wanted to remind you that your membership will be expiring soon.</p>
     
     <div style="background: white; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #f0ad4e;">
       <p style="margin: 0 0 10px 0; font-weight: 600; color: #856404;">Your membership expires in ${daysUntilExpiry} days</p>
@@ -146,7 +149,7 @@ class EmailService {
   
   <div style="background: #1e3a5f; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
     <p style="color: rgba(255,255,255,0.7); margin: 0; font-size: 12px;">
-      Masonic Hall Bar<br>
+      Membership Manager<br>
       This is an automated reminder email.
     </p>
   </div>
@@ -155,11 +158,11 @@ class EmailService {
 `
 
     const text = `
-Masonic Hall Bar - Membership Renewal Reminder
+Membership Manager - Membership Renewal Reminder
 
 Dear ${memberName},
 
-We wanted to remind you that your membership at the Masonic Hall Bar will be expiring soon.
+We wanted to remind you that your membership will be expiring soon.
 
 Your membership expires in ${daysUntilExpiry} days
 
@@ -175,12 +178,12 @@ If you have any questions, please speak to the bar manager.
 
 Thank you for being a valued member!
 
-Masonic Hall Bar
+Membership Manager
 `
 
     return this.sendEmail({
       to: memberEmail,
-      subject: `Your Masonic Hall Bar membership expires in ${daysUntilExpiry} days`,
+      subject: `Your Membership Manager membership expires in ${daysUntilExpiry} days`,
       html,
       text,
     })
@@ -190,7 +193,7 @@ Masonic Hall Bar
     memberName: string
     memberEmail: string
     cardNumber: number
-    cardType: 'QR_CODE' | 'PHYSICAL_CARD'
+    cardType: 'QR_CODE' | 'PHYSICAL_CARD' | 'BOTH'
     subscriptionName: string
     expiryDate: Date
     qrCodeUrl?: string
@@ -203,9 +206,12 @@ Masonic Hall Bar
       year: 'numeric'
     })
 
-    const cardTypeText = cardType === 'QR_CODE' 
-      ? 'Your digital membership card is ready to use immediately.'
-      : 'Your physical membership card is being prepared and will be available for collection at the bar.'
+    const cardTypeText =
+      cardType === 'QR_CODE'
+        ? 'Your digital membership card is ready to use immediately.'
+        : cardType === 'BOTH'
+          ? 'You can use your digital membership card now, and a physical card can also be issued at the bar.'
+          : 'Your physical membership card is being prepared and will be available for collection at the bar.'
 
     const html = `
 <!DOCTYPE html>
@@ -213,18 +219,18 @@ Masonic Hall Bar
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to Masonic Hall Bar</title>
+  <title>Welcome to Membership Manager</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
   <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">Welcome to Masonic Hall Bar!</h1>
+    <h1 style="color: white; margin: 0; font-size: 24px;">Welcome to Membership Manager!</h1>
     <p style="color: rgba(255,255,255,0.8); margin: 10px 0 0 0;">Your membership is now active</p>
   </div>
   
   <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none;">
     <p style="margin-top: 0;">Dear ${memberName},</p>
     
-    <p>Thank you for becoming a member of the Masonic Hall Bar! ${cardTypeText}</p>
+    <p>Thank you for becoming a member! ${cardTypeText}</p>
     
     <div style="background: white; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #28a745;">
       <p style="margin: 0 0 10px 0; font-weight: 600; color: #155724;">Membership Details</p>
@@ -243,12 +249,14 @@ Masonic Hall Bar
         </tr>
         <tr>
           <td style="padding: 8px 0; color: #666;">Card Type:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${cardType === 'QR_CODE' ? 'Digital QR Code' : 'Physical Card'}</td>
+          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${
+            cardType === 'QR_CODE' ? 'Digital QR Code' : cardType === 'BOTH' ? 'Digital QR and Physical Card' : 'Physical Card'
+          }</td>
         </tr>
       </table>
     </div>
     
-    ${cardType === 'QR_CODE' && qrCodeUrl ? `
+    ${(cardType === 'QR_CODE' || cardType === 'BOTH') && qrCodeUrl ? `
     <div style="text-align: center; margin: 30px 0;">
       <a href="${qrCodeUrl}" style="display: inline-block; background: #2563eb; color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">View Your Digital Card</a>
     </div>
@@ -260,13 +268,13 @@ Masonic Hall Bar
     
     <p style="color: #666; font-size: 14px; margin-bottom: 0;">
       We look forward to seeing you at the bar!<br>
-      Masonic Hall Bar
+      Membership Manager
     </p>
   </div>
   
   <div style="background: #1e3a5f; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
     <p style="color: rgba(255,255,255,0.7); margin: 0; font-size: 12px;">
-      Masonic Hall Bar<br>
+      Membership Manager<br>
       This is an automated email.
     </p>
   </div>
@@ -275,32 +283,51 @@ Masonic Hall Bar
 `
 
     const text = `
-Welcome to Masonic Hall Bar!
+Welcome to Membership Manager!
 
 Dear ${memberName},
 
-Thank you for becoming a member of the Masonic Hall Bar! ${cardTypeText}
+Thank you for becoming a member! ${cardTypeText}
 
 Membership Details:
 - Card Number: ${cardNumber}
 - Membership Plan: ${subscriptionName}
 - Valid Until: ${formattedDate}
-- Card Type: ${cardType === 'QR_CODE' ? 'Digital QR Code' : 'Physical Card'}
+- Card Type: ${cardType === 'QR_CODE' ? 'Digital QR Code' : cardType === 'BOTH' ? 'Digital QR and Physical Card' : 'Physical Card'}
 
-${cardType === 'QR_CODE' && qrCodeUrl ? `View your digital card here: ${qrCodeUrl}` : ''}
+${(cardType === 'QR_CODE' || cardType === 'BOTH') && qrCodeUrl ? `View your digital card here: ${qrCodeUrl}` : ''}
 
 Simply present your membership card at the bar to receive your member discounts.
 
 We look forward to seeing you at the bar!
 
-Masonic Hall Bar
+Membership Manager
 `
 
     return this.sendEmail({
       to: memberEmail,
-      subject: 'Welcome to Masonic Hall Bar - Your membership is active!',
+      subject: 'Welcome to Membership Manager - Your membership is active!',
       html,
       text,
+    })
+  }
+
+  async sendDigitalCardEmail(params: {
+    memberName: string
+    memberEmail: string
+    cardNumber: number
+    qrCodeUrl: string
+  }): Promise<{ success: boolean; error?: string }> {
+    const { memberName, memberEmail, cardNumber, qrCodeUrl } = params
+    return this.sendEmail({
+      to: memberEmail,
+      subject: 'Your Membership Manager digital card',
+      html: `
+        <p>Hi ${memberName},</p>
+        <p>A digital membership card is now available for card #${cardNumber}. Show the QR code at the bar, or keep the physical card if you already have one.</p>
+        <p><a href="${qrCodeUrl}">Open your digital card</a></p>
+      `,
+      text: `Hi ${memberName},\n\nA digital membership card is now available for card #${cardNumber}.\n\nOpen it here: ${qrCodeUrl}\n`,
     })
   }
 }

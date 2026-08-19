@@ -182,7 +182,7 @@ function RenewContent() {
       <div className="max-w-lg mx-auto">
         <div className="text-center mb-8">
           <Link href="/" className="text-2xl font-bold text-gray-900">
-            Masonic Hall Bar
+            Membership Manager
           </Link>
           <h1 className="text-xl text-gray-600 mt-2">Renew Your Membership</h1>
         </div>
