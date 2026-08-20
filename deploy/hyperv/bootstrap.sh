@@ -98,7 +98,7 @@ echo
 echo "Firebase Hosting-parity stack is running on this VM."
 echo "Public sites are on ports 80 and 443 only."
 echo
-echo "  App:           http://membership.${DOMAIN}  (also http://${DOMAIN} and http://www.${DOMAIN})"
+echo "  App:           https://membership.${DOMAIN}  (Let's Encrypt; also http://${DOMAIN} and http://www.${DOMAIN} on the LAN)"
 echo "  Admin:         http://membership.${DOMAIN}/admin"
 echo "  Docker UI:     http://portainer.${DOMAIN}"
 echo "  Traefik:       http://traefik.${DOMAIN}"

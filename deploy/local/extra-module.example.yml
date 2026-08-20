@@ -24,4 +24,5 @@ services:
       - traefik.enable=true
       - traefik.http.routers.payments.rule=Host(`payments.ashlartechnologies.com`)
       - traefik.http.routers.payments.entrypoints=web,websecure
+      - traefik.http.routers.payments.middlewares=admin-acl
       - traefik.http.services.payments.loadbalancer.server.port=3000

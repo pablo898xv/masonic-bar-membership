@@ -135,7 +135,7 @@ cd masonic-bar-membership
 bash deploy/hyperv/bootstrap.sh
 ```
 
-The first bootstrap run installs Docker and asks you to log out/in. Run it again to build images and start the stack. From Windows, add the guest IP to `C:\Windows\System32\drivers\etc\hosts` for `ashlartechnologies.com`, `www.ashlartechnologies.com`, `membership.ashlartechnologies.com`, `portainer.ashlartechnologies.com`, `relay.ashlartechnologies.com`, and `traefik.ashlartechnologies.com`, then open those hostnames on ports 80/443. Set the Portainer admin password on first visit. VM default: 2 vCPU, 4 GB startup / 6 GB max, 40 GB dynamic disk, Default Switch NAT.
+The first bootstrap run installs Docker and asks you to log out/in. Run it again to build images and start the stack. From Windows, add the guest IP to `C:\Windows\System32\drivers\etc\hosts` for `ashlartechnologies.com`, `www.ashlartechnologies.com`, `membership.ashlartechnologies.com`, `portainer.ashlartechnologies.com`, `relay.ashlartechnologies.com`, and `traefik.ashlartechnologies.com`, then open those hostnames on ports 80/443. Public `membership.ashlartechnologies.com` uses Let's Encrypt (HTTP-01 on port 80); set `ACME_EMAIL` in `.env`. Set the Portainer admin password on first visit. VM default: 2 vCPU, 4 GB startup / 6 GB max, 40 GB dynamic disk, Default Switch NAT.
 
 ## Deployment to Firebase
 

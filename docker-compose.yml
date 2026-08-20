@@ -40,16 +40,23 @@ services:
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.http.tls=true
       - --api.dashboard=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-webmaster@ashlartechnologies.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
     ports:
       - "${PUBLISH_HOST:-127.0.0.1}:80:80"
       - "${PUBLISH_HOST:-127.0.0.1}:443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
     labels:
       - traefik.enable=true
       - traefik.http.routers.dashboard.rule=Host(`traefik.${HOST_DOMAIN:-ashlartechnologies.com}`)
       - traefik.http.routers.dashboard.entrypoints=web,websecure
+      - traefik.http.routers.dashboard.middlewares=admin-acl
       - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.middlewares.admin-acl.ipallowlist.sourcerange=${ADMIN_ACL:-10.0.1.0/24,92.207.102.100/30,62.223.215.229/32}
     networks:
       - masonic_private
 
@@ -88,7 +95,7 @@ services:
       - masonic_private
 
   # SMTP stand-in for production mail. SMTP is loopback-only (host `npm run dev`).
-  # The Mailpit UI is public on relay.${HOST_DOMAIN} via Traefik :80/:443.
+  # The Mailpit UI is on relay.${HOST_DOMAIN} via Traefik, restricted by ADMIN_ACL.
   mailpit:
     image: axllent/mailpit:latest
     container_name: masonic-mailpit
@@ -99,6 +106,7 @@ services:
       - traefik.enable=true
       - traefik.http.routers.relay.rule=Host(`relay.${HOST_DOMAIN:-ashlartechnologies.com}`)
       - traefik.http.routers.relay.entrypoints=web,websecure
+      - traefik.http.routers.relay.middlewares=admin-acl
       - traefik.http.services.relay.loadbalancer.server.port=8025
     networks:
       - masonic_private
@@ -111,7 +119,7 @@ services:
       context: .
       dockerfile: deploy/local/Dockerfile.app
       args:
-        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://membership.ashlartechnologies.com}
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-https://membership.ashlartechnologies.com}
     container_name: masonic-web
     restart: unless-stopped
     env_file:
@@ -124,7 +132,7 @@ services:
       USE_LOCAL_DB: "false"
       HOSTNAME: 0.0.0.0
       PORT: "3000"
-      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://membership.ashlartechnologies.com}
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-https://membership.ashlartechnologies.com}
       SMTP_HOST: mailpit
       SMTP_PORT: "1025"
     volumes:
@@ -148,9 +156,22 @@ services:
       start_period: 20s
     labels:
       - traefik.enable=true
-      - traefik.http.routers.membership.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`) || Host(`${HOST_DOMAIN:-ashlartechnologies.com}`) || Host(`www.${HOST_DOMAIN:-ashlartechnologies.com}`)
-      - traefik.http.routers.membership.entrypoints=web,websecure
       - traefik.http.services.membership.loadbalancer.server.port=3000
+      # Public hostname: Let's Encrypt on 443, HTTP-01 on 80, then redirect.
+      - traefik.http.routers.membership.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.membership.entrypoints=websecure
+      - traefik.http.routers.membership.tls=true
+      - traefik.http.routers.membership.tls.certresolver=letsencrypt
+      - traefik.http.middlewares.membership-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.membership-https.redirectscheme.permanent=true
+      - traefik.http.routers.membership-http.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.membership-http.entrypoints=web
+      - traefik.http.routers.membership-http.middlewares=membership-https
+      # LAN / hosts-file names (apex and www DNS are not this VM).
+      - traefik.http.routers.membership-lan.rule=Host(`${HOST_DOMAIN:-ashlartechnologies.com}`) || Host(`www.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.membership-lan.entrypoints=web,websecure
+      - traefik.http.routers.membership-lan.middlewares=admin-acl
+      - traefik.http.routers.membership-lan.service=membership
     networks:
       - masonic_private
 
@@ -168,6 +189,7 @@ services:
       - traefik.enable=true
       - traefik.http.routers.portainer.rule=Host(`portainer.${HOST_DOMAIN:-ashlartechnologies.com}`)
       - traefik.http.routers.portainer.entrypoints=web,websecure
+      - traefik.http.routers.portainer.middlewares=admin-acl
       - traefik.http.services.portainer.loadbalancer.server.port=9000
     networks:
       - masonic_private
@@ -181,3 +203,4 @@ volumes:
   firebase_data:
   firebase_cache:
   portainer_data:
+  traefik_letsencrypt:
