@@ -1,5 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { membershipsCollection, membersCollection, subscriptionPlansCollection } from '@/lib/db'
+import { membershipsCollection, membersCollection, subscriptionPlansCollection, tenantsCollection } from '@/lib/db'
+import { findPackage } from '@/lib/credits'
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
 
 function sameOriginPath(url: string | null, fallback: string) {
   if (!url) return fallback
@@ -11,33 +20,17 @@ function sameOriginPath(url: string | null, fallback: string) {
   }
 }
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url)
-  const membershipId = searchParams.get('membershipId')
-  const paymentId = searchParams.get('paymentId')
-  const returnUrl = searchParams.get('returnUrl')
-  
-  if (!membershipId) {
-    return new NextResponse('Missing membershipId', { status: 400 })
-  }
-  
-  const membership = await membershipsCollection.findById(membershipId)
-  if (!membership) {
-    return new NextResponse('Membership not found', { status: 404 })
-  }
-  
-  const [member, plan] = await Promise.all([
-    membersCollection.findById(membership.memberId),
-    subscriptionPlansCollection.findById(membership.subscriptionPlanId),
-  ])
-  
-  const amount = Number(plan?.price || 0).toFixed(2)
-  const token = encodeURIComponent(membership.accessToken || '')
-  const defaultSuccess = `/membership/card/${membershipId}?token=${token}&paid=1`
-  const successUrl = sameOriginPath(returnUrl, defaultSuccess)
-  const failUrl = `/membership/payment-complete?membershipId=${membershipId}&status=failed`
-  
-  const html = `
+function checkoutPage(opts: {
+  title: string
+  subtitle: string
+  details: string
+  amount: string
+  paymentId: string | null
+  payload: Record<string, unknown>
+  successUrl: string
+  failUrl: string
+}) {
+  return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -59,36 +52,31 @@ export async function GET(request: NextRequest) {
   </style>
 </head>
 <body>
-  <h1>Pay for your membership</h1>
-  <p class="sub">Mock checkout for local development (Pixl Pay is not connected yet).</p>
+  <h1>${opts.title}</h1>
+  <p class="sub">${opts.subtitle}</p>
   <div class="card">
-    <div class="details">
-      <strong>Member:</strong> ${member?.name || 'Unknown'}<br>
-      <strong>Plan:</strong> ${plan?.name || 'Unknown'}<br>
-      <strong>Method:</strong> ${membership.paymentMethod === 'OPEN_BANKING' ? 'Open Banking' : 'Card'}
-    </div>
-    <div class="amount">&pound;${amount}</div>
+    <div class="details">${opts.details}</div>
+    <div class="amount">&pound;${opts.amount}</div>
   </div>
   <div class="buttons">
     <button class="cancel" onclick="completePayment('failed')">Cancel</button>
-    <button class="success" onclick="completePayment('success')">Pay &pound;${amount}</button>
+    <button class="success" onclick="completePayment('success')">Pay &pound;${opts.amount}</button>
   </div>
-  <p class="note">Payment ID ${paymentId || 'pending'}</p>
+  <p class="note">Open banking (mock) · Payment ID ${opts.paymentId || 'pending'}</p>
   <script>
     async function completePayment(status) {
       const response = await fetch('/api/payments/mock-complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          paymentId: ${JSON.stringify(paymentId)},
-          membershipId: ${JSON.stringify(membershipId)},
+          ...${JSON.stringify(opts.payload)},
           status: status
         })
       });
       if (response.ok) {
         window.location.href = status === 'success'
-          ? ${JSON.stringify(successUrl)}
-          : ${JSON.stringify(failUrl)};
+          ? ${JSON.stringify(opts.successUrl)}
+          : ${JSON.stringify(opts.failUrl)};
       } else {
         alert('Payment processing failed');
       }
@@ -97,7 +85,68 @@ export async function GET(request: NextRequest) {
 </body>
 </html>
   `
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url)
+  const membershipId = searchParams.get('membershipId')
+  const paymentId = searchParams.get('paymentId')
+  const returnUrl = searchParams.get('returnUrl')
+
+  if (searchParams.get('kind') === 'credits') {
+    const tenantId = searchParams.get('tenantId') || ''
+    const packageKey = searchParams.get('packageKey') || ''
+    const pack = findPackage(packageKey)
+    const tenant = tenantId ? await tenantsCollection.findById(tenantId) : null
+    if (!pack || !tenant) {
+      return new NextResponse('Credit pack purchase not found', { status: 404 })
+    }
+    const amount = (pack.pricePence / 100).toFixed(2)
+    const successUrl = sameOriginPath(returnUrl, '/admin/credits?paid=1')
+    const html = checkoutPage({
+      title: 'Buy credit pack',
+      subtitle: 'Mock open banking checkout for local development (Hope Macy is not connected yet).',
+      details: `<strong>Venue:</strong> ${escapeHtml(tenant.name)}<br><strong>Pack:</strong> ${escapeHtml(pack.name)} (${pack.credits} credits)<br><strong>Method:</strong> Open Banking`,
+      amount,
+      paymentId,
+      payload: { kind: 'credits', paymentId, tenantId, packageKey },
+      successUrl,
+      failUrl: '/admin/credits?cancelled=1',
+    })
+    return new NextResponse(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
+  }
+
+  if (!membershipId) {
+    return new NextResponse('Missing membershipId', { status: 400 })
+  }
   
+  const membership = await membershipsCollection.findById(membershipId)
+  if (!membership) {
+    return new NextResponse('Membership not found', { status: 404 })
+  }
+  
+  const [member, plan] = await Promise.all([
+    membersCollection.findById(membership.memberId),
+    subscriptionPlansCollection.findById(membership.subscriptionPlanId),
+  ])
+  
+  const amount = Number(plan?.price || 0).toFixed(2)
+  const token = encodeURIComponent(membership.accessToken || '')
+  const defaultSuccess = `/membership/card/${membershipId}?token=${token}&paid=1`
+  const successUrl = sameOriginPath(returnUrl, defaultSuccess)
+  const failUrl = `/membership/payment-complete?membershipId=${membershipId}&status=failed`
+
+  const html = checkoutPage({
+    title: 'Pay for your membership',
+    subtitle: 'Mock checkout for local development (Hope Macy is not connected yet).',
+      details: `<strong>Member:</strong> ${escapeHtml(member?.name || 'Unknown')}<br><strong>Plan:</strong> ${escapeHtml(plan?.name || 'Unknown')}<br><strong>Method:</strong> Open Banking`,
+    amount,
+    paymentId,
+    payload: { paymentId, membershipId },
+    successUrl,
+    failUrl,
+  })
+
   return new NextResponse(html, {
     headers: { 'Content-Type': 'text/html; charset=utf-8' }
   })

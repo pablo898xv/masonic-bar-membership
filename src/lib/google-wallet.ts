@@ -17,6 +17,7 @@ export type GoogleWalletPassInput = {
   planName: string
   expiryDate?: Date
   origins?: string[]
+  tenantId?: string
 }
 
 function parseServiceAccountJson(raw: string): ServiceAccount | null {
@@ -80,7 +81,7 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
 
   const genericClassId = classId(issuerId, settings.googleWalletClassSuffix.trim())
   const genericObjectId = objectId(issuerId, input.membershipId)
-  const barcodeValue = await formatMembershipQRData(input.cardNumber)
+  const barcodeValue = await formatMembershipQRData(input.cardNumber, input.tenantId)
   const expiryLabel = input.expiryDate ? format(input.expiryDate, 'dd MMM yyyy') : '—'
   const logoUrl = settings.googleWalletLogoUrl.trim()
 

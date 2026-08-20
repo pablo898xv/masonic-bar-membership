@@ -32,24 +32,31 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
   
   const [selectedPlan, setSelectedPlan] = useState('')
   const [cardType, setCardType] = useState('QR_CODE')
-  const [paymentMethod, setPaymentMethod] = useState('CARD')
+  const [paymentMethod, setPaymentMethod] = useState('OPEN_BANKING')
+  const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const isComplimentary = paymentMethod === 'COMPLIMENTARY'
+  const outOfCredits = creditBalance !== null && creditBalance < 1
 
   useEffect(() => {
     async function fetchData() {
       try {
-        const [memberRes, plansRes] = await Promise.all([
+        const [memberRes, plansRes, tenantRes] = await Promise.all([
           fetch(`/api/members/${resolvedParams.id}`),
-          fetch('/api/subscription-plans?active=true')
+          fetch('/api/subscription-plans?active=true'),
+          fetch('/api/tenants/current'),
         ])
 
         if (!memberRes.ok) throw new Error('Member not found')
 
         const memberData = await memberRes.json()
         const plansData = await plansRes.json()
+        const tenantData = await tenantRes.json()
 
         setMember(memberData)
         setPlans(plansData)
+        setCreditBalance(
+          typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
+        )
         if (plansData.length > 0) setSelectedPlan(plansData[0].id)
       } catch (err: any) {
         setError(err.message)
@@ -212,8 +219,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
                   options={[
-                    { value: 'CARD', label: 'Card Payment (Dojo)' },
-                    { value: 'OPEN_BANKING', label: 'Open Banking' },
+                    { value: 'OPEN_BANKING', label: 'Open banking (Hope Macy)' },
                     { value: 'COMPLIMENTARY', label: 'Complimentary (no charge)' }
                   ]}
                 />
@@ -237,8 +243,14 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                       Valid for {selectedPlanDetails.durationYears} year{selectedPlanDetails.durationYears > 1 ? 's' : ''}
                     </div>
                     <p className="mt-2 text-sm text-yellow-700 bg-yellow-50 p-2 rounded">
-                      The card will be added to the encoding queue{isComplimentary ? '' : ' after payment'}
+                      Uses 1 issuance credit{creditBalance !== null ? ` (${creditBalance} remaining)` : ''}. The card will be added to the encoding queue{isComplimentary ? '' : ' after payment'}.
                     </p>
+                    {outOfCredits && (
+                      <p className="mt-2 text-sm text-red-700 bg-red-50 p-2 rounded">
+                        This venue has no issuance credits left.{' '}
+                        <a href="/admin/credits" className="underline">Buy a credit pack</a> before issuing a card.
+                      </p>
+                    )}
                   </div>
                 )}
               </>
@@ -249,8 +261,12 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
               <Button type="button" variant="secondary" onClick={() => router.back()}>
                 Cancel
               </Button>
-              <Button type="submit" loading={submitting}>
-                {isComplimentary ? 'Issue Complimentary Membership' : 'Proceed to Payment'}
+              <Button type="submit" loading={submitting} disabled={outOfCredits}>
+                {outOfCredits
+                  ? 'No credits remaining'
+                  : isComplimentary
+                    ? 'Issue Complimentary Membership'
+                    : 'Proceed to Payment'}
               </Button>
             </CardFooter>
           )}

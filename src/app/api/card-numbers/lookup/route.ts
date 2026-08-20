@@ -8,22 +8,26 @@ import {
 } from '@/lib/db'
 import { cardNumberFromQuery, stripSentinels } from '@/lib/msrx6/protocol'
 import { formatMagstripeData, getMagstripePrefix } from '@/lib/settings'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const q = request.nextUrl.searchParams.get('q')?.trim() || ''
     if (!q) {
       return NextResponse.json({ error: 'Enter a card number or swipe a card' }, { status: 400 })
     }
 
-    const magstripePrefix = await getMagstripePrefix()
+    const magstripePrefix = await getMagstripePrefix(tenant.id)
     const cardNumber = cardNumberFromQuery(q, magstripePrefix)
     if (cardNumber == null) {
       return NextResponse.json({ error: 'Could not read a card number from that input' }, { status: 400 })
     }
 
-    const magstripeData = await formatMagstripeData(cardNumber)
-    const number = await membershipNumbersCollection.findByCardNumber(cardNumber)
+    const magstripeData = await formatMagstripeData(cardNumber, tenant.id)
+    const number = await membershipNumbersCollection.findByCardNumber(cardNumber, tenant.id)
     if (!number) {
       return NextResponse.json({
         found: false,

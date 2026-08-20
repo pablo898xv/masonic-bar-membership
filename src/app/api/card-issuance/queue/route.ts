@@ -7,16 +7,20 @@ import {
   subscriptionPlansCollection,
 } from '@/lib/db'
 import { getMagstripePrefix } from '@/lib/settings'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const includeCompleted = request.nextUrl.searchParams.get('includeCompleted') === 'true'
     const statuses = ['PENDING', 'READY_TO_ENCODE', 'ENCODED']
     if (includeCompleted) {
       statuses.push('ISSUED', 'SHIPPED')
     }
 
-    const issuances = await cardIssuancesCollection.findByStatuses(statuses)
+    const issuances = await cardIssuancesCollection.findByStatuses(statuses, tenant.id)
     
     const issuancesWithDetails = await Promise.all(
       issuances.map(async (issuance) => {
@@ -72,7 +76,7 @@ export async function GET(request: NextRequest) {
       actionRequired: queue.readyToEncode.length + queue.encoded.length,
     }
     
-    const magstripePrefix = await getMagstripePrefix()
+    const magstripePrefix = await getMagstripePrefix(tenant.id)
     return NextResponse.json({
       queue,
       summary,

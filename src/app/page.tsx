@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { VenueSignupLinks } from '@/components/venue-signup-links'
 
 export default function Home() {
   return (
@@ -17,6 +18,7 @@ export default function Home() {
           <p className="text-xl text-slate-300">
             Membership Discount Card System
           </p>
+          <p className="text-sm text-slate-500 mt-2">Ashlar Technologies</p>
         </div>
 
         {/* Features */}
@@ -71,28 +73,12 @@ export default function Home() {
         </div>
 
         {/* CTA */}
-        <div className="text-center space-y-4">
-          <Link
-            href="/membership/register"
-            className="inline-flex items-center justify-center px-8 py-4 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-colors text-lg"
-          >
-            Become a Member
-            <svg className="w-5 h-5 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-            </svg>
-          </Link>
-          <div className="text-slate-400">
-            Already a member?{' '}
-            <Link href="/membership/lookup" className="text-blue-400 hover:underline">
-              Look up your card
-            </Link>
-          </div>
-        </div>
+        <VenueSignupLinks />
 
         {/* Admin Link */}
         <div className="mt-16 pt-8 border-t border-slate-700 text-center">
           <Link
-            href="/admin"
+            href="/admin/login"
             className="text-sm text-slate-500 hover:text-slate-400"
           >
             Bar Manager Login →

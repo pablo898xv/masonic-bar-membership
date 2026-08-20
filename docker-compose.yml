@@ -1,10 +1,58 @@
 # Local data plane matching Firebase Hosting / Firestore (same shape as live).
-# Next.js still runs on the host (`npm run dev`) — equivalent to Hosting + Cloud Functions.
+#
+# Default (laptop): Firestore + Auth emulators + Mailpit. Next.js still runs on
+# the host (`npm run dev`) — equivalent to Hosting + Cloud Functions.
 #
 #   bash deploy/local/setup.sh
 #   npm run dev
 #
+# Hosting-parity (Hyper-V VM or production-like local): also start the Next.js
+# container (`next start` standalone) instead of `npm run dev`.
+#
+#   bash deploy/local/setup.sh --hosting
+#   # or: docker compose --profile hosting up -d --build
+#
+# Hyper-V guests bind Traefik on 0.0.0.0 so the Windows host can reach :80/:443:
+#   PUBLISH_HOST=0.0.0.0 docker compose --profile hosting up -d --build
+#
+# Public interfaces are only 80 and 443 (Traefik). App / Portainer / Mailpit
+# ports stay on the Docker network. Host-header routing mimics Firebase
+# Hosting custom domains. Point DNS or a hosts file at the VM:
+#   ashlartechnologies.com / www / membership  →  web
+#   portainer.ashlartechnologies.com           →  Portainer
+#   relay.ashlartechnologies.com               →  Mailpit
+#   traefik.ashlartechnologies.com             →  Traefik dashboard
+# Override the suffix with HOST_DOMAIN in `.env`. Add another module with the
+# same Traefik labels (see deploy/local/extra-module.example.yml).
+
 services:
+  # Edge router: Host() / PathPrefix() → container. Same role as Firebase Hosting
+  # custom domains + rewrites. Later, those hostnames can CNAME to Google.
+  traefik:
+    image: traefik:v3.6.1
+    container_name: masonic-traefik
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=masonic_private
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.http.tls=true
+      - --api.dashboard=true
+    ports:
+      - "${PUBLISH_HOST:-127.0.0.1}:80:80"
+      - "${PUBLISH_HOST:-127.0.0.1}:443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.dashboard.entrypoints=web,websecure
+      - traefik.http.routers.dashboard.service=api@internal
+    networks:
+      - masonic_private
+
   firebase:
     build:
       context: ./deploy/local
@@ -13,6 +61,8 @@ services:
     restart: unless-stopped
     environment:
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-demo-masonic-bar}
+      # Cap the Java heap so the emulator fits a small Hyper-V guest.
+      JAVA_TOOL_OPTIONS: ${FIREBASE_JAVA_OPTS:--Xmx768m}
     volumes:
       - ./deploy/local/firebase.json:/firebase/firebase.json:ro
       - ./.firebaserc:/firebase/.firebaserc:ro
@@ -21,9 +71,9 @@ services:
       - firebase_data:/firebase/data
       - firebase_cache:/root/.cache/firebase
     ports:
-      - "127.0.0.1:4000:4000"   # Emulator UI
-      - "127.0.0.1:8080:8080"   # Firestore
-      - "127.0.0.1:9099:9099"   # Auth
+      - "127.0.0.1:4000:4000"   # Emulator UI (loopback only; not a public site)
+      - "127.0.0.1:8080:8080"   # Firestore (host `npm run dev`)
+      - "127.0.0.1:9099:9099"   # Auth (host `npm run dev`)
       - "127.0.0.1:4400:4400"   # Hub
       - "127.0.0.1:4500:4500"   # Logging
       - "127.0.0.1:9150:9150"   # Firestore UI websocket
@@ -37,22 +87,97 @@ services:
     networks:
       - masonic_private
 
-  # SMTP stand-in for production mail. Bound on 1125/8125 so it does not clash
-  # with Pixl Payments Mailpit (1025/8025).
+  # SMTP stand-in for production mail. SMTP is loopback-only (host `npm run dev`).
+  # The Mailpit UI is public on relay.${HOST_DOMAIN} via Traefik :80/:443.
   mailpit:
     image: axllent/mailpit:latest
     container_name: masonic-mailpit
     restart: unless-stopped
     ports:
       - "127.0.0.1:1125:1025"
-      - "127.0.0.1:8125:8025"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.relay.rule=Host(`relay.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.relay.entrypoints=web,websecure
+      - traefik.http.services.relay.loadbalancer.server.port=8025
+    networks:
+      - masonic_private
+
+  # Firebase Hosting + Cloud Functions (frameworksBackend) stand-in.
+  # Production `next start`, talking to the emulators over the compose network.
+  web:
+    profiles: ["hosting"]
+    build:
+      context: .
+      dockerfile: deploy/local/Dockerfile.app
+      args:
+        NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://membership.ashlartechnologies.com}
+    container_name: masonic-web
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-demo-masonic-bar}
+      NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-demo-masonic-bar}
+      FIRESTORE_EMULATOR_HOST: firebase:8080
+      FIREBASE_AUTH_EMULATOR_HOST: firebase:9099
+      USE_LOCAL_DB: "false"
+      HOSTNAME: 0.0.0.0
+      PORT: "3000"
+      NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-http://membership.ashlartechnologies.com}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+    volumes:
+      - ./certs/apple-wallet:/app/certs/apple-wallet:ro
+    depends_on:
+      firebase:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.membership.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`) || Host(`${HOST_DOMAIN:-ashlartechnologies.com}`) || Host(`www.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.membership.entrypoints=web,websecure
+      - traefik.http.services.membership.loadbalancer.server.port=3000
+    networks:
+      - masonic_private
+
+  # Web UI for Docker Engine (containers, logs, volumes, compose).
+  # Free Portainer CE — first visit sets the admin password.
+  # App data stays in the Firebase emulator UI on port 4000.
+  portainer:
+    image: portainer/portainer-ce:lts
+    container_name: masonic-portainer
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portainer.rule=Host(`portainer.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.portainer.entrypoints=web,websecure
+      - traefik.http.services.portainer.loadbalancer.server.port=9000
     networks:
       - masonic_private
 
 networks:
   masonic_private:
+    name: masonic_private
     driver: bridge
 
 volumes:
   firebase_data:
   firebase_cache:
+  portainer_data:

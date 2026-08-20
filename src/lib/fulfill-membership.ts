@@ -6,12 +6,13 @@ import {
   membersCollection,
   walletPassesCollection,
 } from '@/lib/db'
-import tillSystem from '@/lib/till-system'
+import { tillSystemFor } from '@/lib/till-system'
 import { formatMembershipQRData } from '@/lib/qrcode'
 import { membershipCardUrl } from '@/lib/card-link'
 import { emailService } from '@/lib/email'
 import { hasDigitalCard } from '@/lib/card-type'
 import { formatMagstripeData, getAppSettings } from '@/lib/settings'
+import { assertCreditsAvailable, consumeIssuanceCredit, unchargedFormats } from '@/lib/tenancy'
 import { v4 as uuidv4 } from 'uuid'
 
 async function ensureAccessToken(membershipId: string, current?: string) {
@@ -25,13 +26,15 @@ async function ensureWalletPass(membershipId: string, cardNumber: number) {
   const existing = await walletPassesCollection.findByMembershipId(membershipId)
   if (existing) return existing
 
+  const membership = await membershipsCollection.findById(membershipId)
   const settings = await getAppSettings()
   return walletPassesCollection.create({
     membershipId,
+    tenantId: membership?.tenantId || '',
     passTypeId: settings.passTypeIdentifier || 'pass.com.masonicbar.membership',
     serialNumber: uuidv4(),
     authToken: uuidv4(),
-    qrCodeData: await formatMembershipQRData(cardNumber),
+    qrCodeData: await formatMembershipQRData(cardNumber, membership?.tenantId),
     lastUpdated: new Date(),
   })
 }
@@ -43,12 +46,13 @@ export async function ensureReadyToEncode(membershipId: string) {
   const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
   if (!membershipNumber) return null
 
-  const magstripeData = await formatMagstripeData(membershipNumber.cardNumber)
+  const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, membership.tenantId)
   const existing = await cardIssuancesCollection.findByMembershipId(membershipId)
 
   if (!existing) {
     return cardIssuancesCollection.create({
       membershipId,
+      tenantId: membership.tenantId,
       queueStatus: 'READY_TO_ENCODE',
       magstripeData,
     })
@@ -83,7 +87,19 @@ export async function recordEncodedCard(
     return { ok: false as const, status: 404, error: 'Card number not found' }
   }
 
-  const magstripeData = await formatMagstripeData(membershipNumber.cardNumber)
+  if (membership.cardType === 'QR_CODE') {
+    const charged = await consumeIssuanceCredit(
+      membership.tenantId,
+      membershipId,
+      'PHYSICAL_CARD',
+      undefined,
+      membership.membershipNumberId
+    )
+    if (!charged.ok) return charged
+    await membershipsCollection.update(membershipId, { cardType: 'BOTH' })
+  }
+
+  const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, membership.tenantId)
   const existing = await cardIssuancesCollection.findByMembershipId(membershipId)
   const wasIssued = existing
     ? existing.queueStatus === 'ISSUED' || existing.queueStatus === 'SHIPPED'
@@ -100,16 +116,13 @@ export async function recordEncodedCard(
       })
     : await cardIssuancesCollection.create({
         membershipId,
+        tenantId: membership.tenantId,
         magstripeData,
         queueStatus: 'ENCODED',
         encodedAt: new Date(),
         encodedBy,
         notes,
       })
-
-  if (membership.cardType === 'QR_CODE') {
-    await membershipsCollection.update(membershipId, { cardType: 'BOTH' })
-  }
 
   return { ok: true as const, issuance, magstripeData }
 }
@@ -138,6 +151,17 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
   }
 
   const accessToken = await ensureAccessToken(membershipId, membership.accessToken)
+  const addingFormat = membership.cardType !== 'BOTH' && membership.cardType !== format
+  if (addingFormat) {
+    const charged = await consumeIssuanceCredit(
+      membership.tenantId,
+      membershipId,
+      format,
+      undefined,
+      membership.membershipNumberId
+    )
+    if (!charged.ok) return charged
+  }
   const cardType = withAddedFormat(membership.cardType, format)
 
   if (format === 'PHYSICAL_CARD') {
@@ -156,7 +180,8 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
       }
     }
     if (!membership.tillSystemEnabled && membership.status === 'ACTIVE' && membership.expiryDate) {
-      const result = await tillSystem.enableCard({
+      const till = await tillSystemFor(membership.tenantId)
+      const result = await till.enableCard({
         cardNumber: membershipNumber.cardNumber.toString(),
         membershipId,
         expiryDate: membership.expiryDate,
@@ -178,7 +203,7 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
     ok: true as const,
     cardType,
     digitalCardPath: `/membership/card/${membershipId}?token=${encodeURIComponent(accessToken)}`,
-    magstripeData: await formatMagstripeData(membershipNumber.cardNumber),
+    magstripeData: await formatMagstripeData(membershipNumber.cardNumber, membership.tenantId),
   }
 }
 
@@ -202,6 +227,25 @@ export async function fulfillPaidMembership(membershipId: string) {
   }
 
   if (!alreadyActive) {
+    const formats = await unchargedFormats(
+      membership.tenantId,
+      membershipId,
+      membership.cardType,
+      membership.membershipNumberId
+    )
+    const available = await assertCreditsAvailable(membership.tenantId, formats.length)
+    if (!available.ok) throw new Error(available.error)
+    for (const format of formats) {
+      const charged = await consumeIssuanceCredit(
+        membership.tenantId,
+        membershipId,
+        format,
+        undefined,
+        membership.membershipNumberId
+      )
+      if (!charged.ok) throw new Error(charged.error)
+    }
+
     await membershipsCollection.update(membershipId, {
       status: 'ACTIVE',
       paymentStatus: 'COMPLETED',
@@ -212,7 +256,8 @@ export async function fulfillPaidMembership(membershipId: string) {
     if (hasDigitalCard(membership.cardType)) {
       const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
       if (membershipNumber) {
-        const result = await tillSystem.enableCard({
+        const till = await tillSystemFor(membership.tenantId)
+        const result = await till.enableCard({
           cardNumber: membershipNumber.cardNumber.toString(),
           membershipId,
           expiryDate,

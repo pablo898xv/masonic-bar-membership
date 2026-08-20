@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { membershipsCollection, membershipNumbersCollection, cardIssuancesCollection } from '@/lib/db'
-import tillSystem from '@/lib/till-system'
+import { tillSystemFor } from '@/lib/till-system'
 
 export async function POST(request: NextRequest) {
   try {
@@ -33,7 +33,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Membership number not found' }, { status: 404 })
     }
     
-    const result = await tillSystem.enableCard({
+    const till = await tillSystemFor(membership.tenantId)
+    const result = await till.enableCard({
       cardNumber: membershipNumber.cardNumber.toString(),
       membershipId: membership.id,
       expiryDate: membership.expiryDate!,

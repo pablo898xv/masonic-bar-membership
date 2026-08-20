@@ -1,47 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { membershipsCollection, membershipNumbersCollection } from '@/lib/db'
-import tillSystem from '@/lib/till-system'
+import { requireCronOrAdmin } from '@/lib/auth'
+import { tillSystemFor } from '@/lib/till-system'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('authorization')
-    const cronSecret = process.env.CRON_SECRET
-    
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { user, error } = await requireCronOrAdmin(request)
+    if (error) return error
+
+    let tenantId: string | undefined
+    if (user) {
+      const resolved = await requireTenant(request)
+      if (resolved.error || !resolved.tenant) return resolved.error!
+      tenantId = resolved.tenant.id
     }
-    
-    const expiredMemberships = await membershipsCollection.findExpired()
-    
+
+    const expiredMemberships = await membershipsCollection.findExpired(tenantId)
+
     const results = {
       processed: 0,
       expired: 0,
       tillSystemDisabled: 0,
-      errors: [] as string[]
+      errors: [] as string[],
     }
-    
+
     for (const membership of expiredMemberships) {
       results.processed++
-      
+
       try {
         await membershipsCollection.update(membership.id, {
-          status: 'EXPIRED'
+          status: 'EXPIRED',
         })
         results.expired++
-        
+
         if (membership.tillSystemEnabled) {
           const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
-          
+
           if (membershipNumber) {
             try {
-              const tillResult = await tillSystem.disableCard({
+              const till = await tillSystemFor(membership.tenantId)
+              const tillResult = await till.disableCard({
                 cardNumber: membershipNumber.cardNumber.toString(),
-                reason: 'Membership expired'
+                reason: 'Membership expired',
               })
-              
+
               if (tillResult.success) {
                 await membershipsCollection.update(membership.id, {
-                  tillSystemEnabled: false
+                  tillSystemEnabled: false,
                 })
                 results.tillSystemDisabled++
               }
@@ -54,11 +60,11 @@ export async function POST(request: NextRequest) {
         results.errors.push(`Failed to process membership ${membership.id}: ${error}`)
       }
     }
-    
+
     return NextResponse.json({
       message: 'Expiry check completed',
       results,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     })
   } catch (error) {
     console.error('Error running expiry check:', error)

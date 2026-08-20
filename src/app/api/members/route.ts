@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { membersCollection, membershipsCollection, membershipNumbersCollection, subscriptionPlansCollection } from '@/lib/db'
 import { memberSchema } from '@/lib/validation'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
@@ -11,7 +15,7 @@ export async function GET(request: NextRequest) {
     const email = searchParams.get('email')
 
     if (email) {
-      const member = await membersCollection.findByEmail(email)
+      const member = await membersCollection.findByEmail(email, tenant.id)
       return NextResponse.json({
         members: member ? [member] : [],
         pagination: { page: 1, limit: 1, total: member ? 1 : 0, totalPages: member ? 1 : 0 }
@@ -19,6 +23,7 @@ export async function GET(request: NextRequest) {
     }
     
     const { members, total } = await membersCollection.findMany({
+      tenantId: tenant.id,
       search: search || undefined,
       take: limit,
     })
@@ -58,6 +63,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const body = await request.json()
     
     const validation = memberSchema.safeParse(body)
@@ -70,7 +78,7 @@ export async function POST(request: NextRequest) {
     
     const { name, email, phone } = validation.data
     
-    const existingMember = await membersCollection.findByEmail(email)
+    const existingMember = await membersCollection.findByEmail(email, tenant.id)
     
     if (existingMember) {
       return NextResponse.json(
@@ -79,7 +87,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const member = await membersCollection.create({ name, email, phone })
+    const member = await membersCollection.create({ tenantId: tenant.id, name, email, phone })
     
     return NextResponse.json(member, { status: 201 })
   } catch (error) {

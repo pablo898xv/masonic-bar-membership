@@ -1,0 +1,27 @@
+# Example: add another product/module on the same VM, routed by Host header.
+# Copy this file, rename the service, and start it on the existing network:
+#
+#   docker compose -f extra-module.yml up -d
+#
+# Public URL is http(s)://payments.ashlartechnologies.com on ports 80/443 — do not publish extra host ports.
+#   <vm-ip>  payments.ashlartechnologies.com
+#
+# Path-based routing on one hostname instead of a new host:
+#   traefik.http.routers.payments.rule=Host(`app.ashlartechnologies.com`) && PathPrefix(`/payments`)
+
+networks:
+  masonic_private:
+    external: true
+    name: masonic_private
+
+services:
+  payments:
+    image: your-module:latest
+    restart: unless-stopped
+    networks:
+      - masonic_private
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.payments.rule=Host(`payments.ashlartechnologies.com`)
+      - traefik.http.routers.payments.entrypoints=web,websecure
+      - traefik.http.services.payments.loadbalancer.server.port=3000

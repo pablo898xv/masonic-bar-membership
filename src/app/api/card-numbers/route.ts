@@ -7,9 +7,13 @@ import {
 } from '@/lib/db'
 import { cardNumberImportSchema } from '@/lib/validation'
 import { formatMagstripeData, getMagstripePrefix } from '@/lib/settings'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '50')
@@ -17,15 +21,16 @@ export async function GET(request: NextRequest) {
     const batchId = searchParams.get('batchId')
     
     const { numbers, total, stats } = await membershipNumbersCollection.findMany({
+      tenantId: tenant.id,
       assigned: assigned === 'true' ? true : assigned === 'false' ? false : undefined,
       batchId: batchId || undefined,
       take: limit,
     })
 
-    const magstripePrefix = await getMagstripePrefix()
+    const magstripePrefix = await getMagstripePrefix(tenant.id)
     const cardNumbers = await Promise.all(
       numbers.map(async (number) => {
-        const magstripeData = await formatMagstripeData(number.cardNumber)
+        const magstripeData = await formatMagstripeData(number.cardNumber, tenant.id)
         if (!number.isAssigned) {
           return { ...number, magstripeData, membership: null, cardIssuance: null }
         }
@@ -78,6 +83,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const body = await request.json()
     
     const validation = cardNumberImportSchema.safeParse(body)
@@ -107,7 +115,9 @@ export async function POST(request: NextRequest) {
     }
     
     const existingNumbers = await membershipNumbersCollection.findInRange(startNumber, endNumber)
-    const existingSet = new Set(existingNumbers.map(n => n.cardNumber))
+    const existingSet = new Set(
+      existingNumbers.filter((number) => number.tenantId === tenant.id).map((n) => n.cardNumber)
+    )
     
     const newNumbers: Array<{ cardNumber: number; batchId?: string }> = []
     const importBatchId = batchId || `batch-${Date.now()}`
@@ -128,7 +138,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    await membershipNumbersCollection.createMany(newNumbers)
+    await membershipNumbersCollection.createMany(newNumbers, tenant.id)
     
     return NextResponse.json({
       message: `Successfully imported ${newNumbers.length} card numbers`,

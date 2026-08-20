@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { subscriptionPlansCollection, membershipsCollection } from '@/lib/db'
 import { subscriptionPlanSchema } from '@/lib/validation'
+import { belongsToTenant, requireTenant } from '@/lib/tenancy'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     
     const plan = await subscriptionPlansCollection.findById(id)
     
-    if (!plan) {
+    if (!plan || !belongsToTenant(plan, tenant.id)) {
       return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
     }
     
@@ -27,6 +31,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     const body = await request.json()
     
@@ -39,7 +46,7 @@ export async function PATCH(
     }
     
     const existingPlan = await subscriptionPlansCollection.findById(id)
-    if (!existingPlan) {
+    if (!existingPlan || !belongsToTenant(existingPlan, tenant.id)) {
       return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
     }
     
@@ -57,11 +64,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     
     const plan = await subscriptionPlansCollection.findById(id)
     
-    if (!plan) {
+    if (!plan || !belongsToTenant(plan, tenant.id)) {
       return NextResponse.json({ error: 'Subscription plan not found' }, { status: 404 })
     }
     

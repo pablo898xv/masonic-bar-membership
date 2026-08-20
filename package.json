@@ -11,7 +11,8 @@
     "deploy:hosting": "firebase deploy --only hosting",
     "deploy:firestore": "firebase deploy --only firestore",
     "local:setup": "bash deploy/local/setup.sh",
-    "emulators": "docker compose up -d"
+    "emulators": "docker compose up -d",
+    "hosting:local": "bash deploy/local/setup.sh --hosting"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

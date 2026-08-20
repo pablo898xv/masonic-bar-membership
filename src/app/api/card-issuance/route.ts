@@ -5,15 +5,20 @@ import {
   membersCollection, 
   membershipNumbersCollection 
 } from '@/lib/db'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
     const status = searchParams.get('status') || undefined
     
     const { issuances, total } = await cardIssuancesCollection.findMany({
+      tenantId: tenant.id,
       queueStatus: status,
       take: limit,
     })
@@ -32,7 +37,7 @@ export async function GET(request: NextRequest) {
       })
     )
     
-    const statusCounts = await cardIssuancesCollection.countByStatus()
+    const statusCounts = await cardIssuancesCollection.countByStatus(tenant.id)
     
     return NextResponse.json({
       issuances: issuancesWithDetails,

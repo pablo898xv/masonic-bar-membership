@@ -44,6 +44,7 @@ export async function GET(
       planName: subscriptionPlan.name,
       expiryDate: membership.expiryDate,
       origins: [request.nextUrl.origin],
+      tenantId: membership.tenantId,
     })
 
     return NextResponse.redirect(saveUrl)

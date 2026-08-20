@@ -75,13 +75,21 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   const [encodeLoading, setEncodeLoading] = useState(false)
   const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
   const [formatLoading, setFormatLoading] = useState(false)
+  const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const writer = useMsrx6()
 
   const fetchMembership = async () => {
     try {
-      const res = await fetch(`/api/memberships/${id}`)
+      const [res, tenantRes] = await Promise.all([
+        fetch(`/api/memberships/${id}`),
+        fetch('/api/tenants/current'),
+      ])
       if (!res.ok) throw new Error('Membership not found')
       setMembership(await res.json())
+      const tenantData = await tenantRes.json()
+      setCreditBalance(
+        typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
+      )
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load membership')
@@ -148,9 +156,12 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   )
   const canEncode = canIssueCards && Boolean(magstripeData)
   const issuingPhysical = Boolean(membership && !hasPhysicalCard(membership.cardType))
+  const issuingDigital = Boolean(membership && !hasDigitalCard(membership.cardType))
+  const outOfCredits = creditBalance !== null && creditBalance < 1
+  const blockedNewIssue = outOfCredits && (issuingPhysical || issuingDigital)
 
   const handleIssueDigital = async () => {
-    if (!membership || !canIssueCards) return
+    if (!membership || !canIssueCards || (outOfCredits && issuingDigital)) return
     setFormatLoading(true)
     setError('')
     try {
@@ -181,6 +192,10 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
 
   const handleWriterEncode = async () => {
     if (!membership || !canEncode || !magstripeData) return
+    if (issuingPhysical && outOfCredits) {
+      setEncodeMessage('No issuance credits remaining. Buy a credit pack before issuing a physical card.')
+      return
+    }
     if (!writer.connected) {
       setEncodeMessage('Connect the MSRx6 from the bar at the top of the page, then click Encode and write.')
       return
@@ -218,6 +233,10 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   }
 
   const openEncode = () => {
+    if (issuingPhysical && outOfCredits) {
+      setError('No issuance credits remaining. Buy a credit pack before issuing a physical card.')
+      return
+    }
     setEncodeMessage(null)
     setEncodeOpen(true)
     if (writer.connected) {
@@ -381,14 +400,33 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
             </p>
           )}
 
+          {blockedNewIssue && (
+            <p className="text-sm text-red-700 bg-red-50 p-3 rounded-lg">
+              This venue has no issuance credits left.{' '}
+              <Link href="/admin/credits" className="underline">Buy a credit pack</Link> to issue a QR code or a new physical card.
+              Replacement encodes of an already-issued physical card still work.
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-2">
             {canEncode && magstripeData && (
-              <Button size="sm" onClick={openEncode} loading={encodeLoading}>
+              <Button
+                size="sm"
+                onClick={openEncode}
+                loading={encodeLoading}
+                disabled={issuingPhysical && outOfCredits}
+              >
                 {issuingPhysical ? 'Issue physical card' : 'Encode and write'}
               </Button>
             )}
             {canIssueCards && !hasDigitalCard(membership.cardType) && (
-              <Button size="sm" variant="secondary" onClick={handleIssueDigital} loading={formatLoading}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleIssueDigital}
+                loading={formatLoading}
+                disabled={outOfCredits}
+              >
                 Issue digital QR
               </Button>
             )}

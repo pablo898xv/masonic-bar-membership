@@ -5,9 +5,13 @@ import {
   membershipNumbersCollection, 
   subscriptionPlansCollection 
 } from '@/lib/db'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { searchParams } = new URL(request.url)
     const days = parseInt(searchParams.get('days') || '30')
     const includeExpired = searchParams.get('includeExpired') === 'true'
@@ -15,9 +19,10 @@ export async function GET(request: NextRequest) {
     let memberships = await membershipsCollection.findExpiring(days)
     
     if (includeExpired) {
-      const expiredMemberships = await membershipsCollection.findExpired()
+      const expiredMemberships = await membershipsCollection.findExpired(tenant.id)
       memberships = [...expiredMemberships, ...memberships]
     }
+    memberships = memberships.filter((membership) => membership.tenantId === tenant.id)
     
     const membershipsWithDetails = await Promise.all(
       memberships.map(async (m) => {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { membersCollection, membershipsCollection, membershipNumbersCollection, subscriptionPlansCollection } from '@/lib/db'
 import { membershipCardUrl, phonesMatch } from '@/lib/card-link'
 import { emailService } from '@/lib/email'
+import { requireTenant } from '@/lib/tenancy'
 import { z } from 'zod'
 
 const lookupSchema = z.object({
@@ -18,7 +19,8 @@ export async function POST(request: NextRequest) {
     }
 
     const { email, phone } = validation.data
-    const member = await membersCollection.findByEmail(email)
+    const { tenant } = await requireTenant(request)
+    const member = await membersCollection.findByEmail(email, tenant?.id)
 
     if (!member || !phonesMatch(member.phone, phone)) {
       return NextResponse.json(

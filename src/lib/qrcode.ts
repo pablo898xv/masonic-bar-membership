@@ -78,8 +78,8 @@ export async function generateQRCodeSVG(
  * Format membership card number for QR encoding.
  * Till scanners expect ISO Track 2 sentinels: ;payload?
  */
-export async function formatMembershipQRData(cardNumber: number): Promise<string> {
-  const prefix = await getMagstripePrefix()
+export async function formatMembershipQRData(cardNumber: number, tenantId?: string): Promise<string> {
+  const prefix = await getMagstripePrefix(tenantId)
   const payload = `${prefix}${cardNumber}`.trim().replace(/^[%;+]/, '').replace(/\?+$/, '')
   return `;${payload}?`
 }

@@ -4,20 +4,24 @@ import {
   membershipsCollection, 
   membershipNumbersCollection 
 } from '@/lib/db'
-import tillSystem from '@/lib/till-system'
+import { tillSystemFor } from '@/lib/till-system'
+import { belongsToTenant, consumeIssuanceCredit, requireTenant } from '@/lib/tenancy'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     const body = await request.json()
     const { issuedBy, enableTillSystem = true } = body
     
     const issuance = await cardIssuancesCollection.findById(id)
     
-    if (!issuance) {
+    if (!issuance || !belongsToTenant(issuance, tenant.id)) {
       return NextResponse.json({ error: 'Card issuance not found' }, { status: 404 })
     }
     
@@ -36,6 +40,16 @@ export async function POST(
     const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
     
     if (membership.cardType === 'QR_CODE') {
+      const charged = await consumeIssuanceCredit(
+        membership.tenantId,
+        membership.id,
+        'PHYSICAL_CARD',
+        undefined,
+        membership.membershipNumberId
+      )
+      if (!charged.ok) {
+        return NextResponse.json({ error: charged.error }, { status: charged.status })
+      }
       await membershipsCollection.update(membership.id, { cardType: 'BOTH' })
     }
 
@@ -48,7 +62,8 @@ export async function POST(
     let tillSystemResult = null
     if (enableTillSystem && membershipNumber) {
       try {
-        tillSystemResult = await tillSystem.enableCard({
+        const till = await tillSystemFor(tenant.id)
+        tillSystemResult = await till.enableCard({
           cardNumber: membershipNumber.cardNumber.toString(),
           membershipId: membership.id,
           expiryDate: membership.expiryDate!,

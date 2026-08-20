@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { membersCollection, membershipsCollection, membershipNumbersCollection, subscriptionPlansCollection, cardIssuancesCollection } from '@/lib/db'
 import { memberUpdateSchema } from '@/lib/validation'
+import { belongsToTenant, requireTenant } from '@/lib/tenancy'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     
     const member = await membersCollection.findById(id)
     
-    if (!member) {
+    if (!member || !belongsToTenant(member, tenant.id)) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
@@ -40,6 +44,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     const body = await request.json()
     
@@ -52,12 +59,12 @@ export async function PATCH(
     }
     
     const existingMember = await membersCollection.findById(id)
-    if (!existingMember) {
+    if (!existingMember || !belongsToTenant(existingMember, tenant.id)) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
     if (validation.data.email && validation.data.email !== existingMember.email) {
-      const emailExists = await membersCollection.findByEmail(validation.data.email)
+      const emailExists = await membersCollection.findByEmail(validation.data.email, tenant.id)
       if (emailExists) {
         return NextResponse.json(
           { error: 'A member with this email already exists' },
@@ -80,11 +87,14 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     
     const member = await membersCollection.findById(id)
     
-    if (!member) {
+    if (!member || !belongsToTenant(member, tenant.id)) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     

@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { subscriptionPlansCollection } from '@/lib/db'
 import { subscriptionPlanSchema } from '@/lib/validation'
+import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { searchParams } = new URL(request.url)
     const activeOnly = searchParams.get('active') === 'true'
     
-    const plans = await subscriptionPlansCollection.findMany(activeOnly)
+    const plans = await subscriptionPlansCollection.findMany(activeOnly, tenant.id)
     
     return NextResponse.json(plans)
   } catch (error) {
@@ -18,6 +22,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const body = await request.json()
     
     const validation = subscriptionPlanSchema.safeParse(body)
@@ -28,7 +35,7 @@ export async function POST(request: NextRequest) {
       )
     }
     
-    const plan = await subscriptionPlansCollection.create(validation.data)
+    const plan = await subscriptionPlansCollection.create({ ...validation.data, tenantId: tenant.id })
     
     return NextResponse.json(plan, { status: 201 })
   } catch (error) {

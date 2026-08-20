@@ -50,7 +50,7 @@ function RenewContent() {
   const [submitting, setSubmitting] = useState(false)
 
   const [selectedPlan, setSelectedPlan] = useState('')
-  const [paymentMethod, setPaymentMethod] = useState('CARD')
+  const paymentMethod = 'OPEN_BANKING'
 
   useEffect(() => {
     async function fetchData() {
@@ -260,44 +260,10 @@ function RenewContent() {
             </div>
 
             <div className="border-t border-gray-200 pt-6">
-              <h3 className="font-medium text-gray-900 mb-4">Payment Method</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <label
-                  className={`p-4 rounded-lg border-2 cursor-pointer text-center transition-colors ${
-                    paymentMethod === 'CARD'
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="paymentMethod"
-                    value="CARD"
-                    checked={paymentMethod === 'CARD'}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="sr-only"
-                  />
-                  <p className="font-medium text-gray-900">Card Payment</p>
-                  <p className="text-xs text-gray-500 mt-1">Visa, Mastercard</p>
-                </label>
-                <label
-                  className={`p-4 rounded-lg border-2 cursor-pointer text-center transition-colors ${
-                    paymentMethod === 'OPEN_BANKING'
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="paymentMethod"
-                    value="OPEN_BANKING"
-                    checked={paymentMethod === 'OPEN_BANKING'}
-                    onChange={(e) => setPaymentMethod(e.target.value)}
-                    className="sr-only"
-                  />
-                  <p className="font-medium text-gray-900">Open Banking</p>
-                  <p className="text-xs text-gray-500 mt-1">Bank transfer</p>
-                </label>
+              <h3 className="font-medium text-gray-900 mb-4">Payment</h3>
+              <div className="p-4 rounded-lg border-2 border-blue-500 bg-blue-50 text-center">
+                <p className="font-medium text-gray-900">Open banking</p>
+                <p className="text-xs text-gray-500 mt-1">Pay from your bank via Hope Macy</p>
               </div>
             </div>
 

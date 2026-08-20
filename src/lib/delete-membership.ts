@@ -5,7 +5,7 @@ import {
   paymentTransactionsCollection,
   walletPassesCollection,
 } from '@/lib/db'
-import tillSystem from '@/lib/till-system'
+import { tillSystemFor } from '@/lib/till-system'
 
 export async function deleteMembershipAndReleaseCard(membershipId: string) {
   const membership = await membershipsCollection.findById(membershipId)
@@ -18,7 +18,8 @@ export async function deleteMembershipAndReleaseCard(membershipId: string) {
 
   if (membershipNumber) {
     try {
-      await tillSystem.disableCard({
+      const till = await tillSystemFor(membership.tenantId)
+      await till.disableCard({
         cardNumber: membershipNumber.cardNumber.toString(),
         reason: 'Membership deleted',
       })

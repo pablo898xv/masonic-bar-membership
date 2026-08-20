@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { isSuperAdmin, requireAdmin, requirePlatformAdmin } from '@/lib/auth'
 import { getAppSettings, toPublicSettings, updateAppSettings } from '@/lib/settings'
 import { appSettingsUpdateSchema } from '@/lib/validation'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
+    const { user, error } = await requireAdmin(request)
+    if (error || !user) return error!
     const settings = await getAppSettings()
-    return NextResponse.json(toPublicSettings(settings))
+    return NextResponse.json(toPublicSettings(settings, isSuperAdmin(user)))
   } catch (error) {
     console.error('Error loading settings:', error)
     return NextResponse.json({ error: 'Failed to load settings' }, { status: 500 })
@@ -14,6 +17,9 @@ export async function GET() {
 
 export async function PUT(request: NextRequest) {
   try {
+    const { error } = await requirePlatformAdmin(request)
+    if (error) return error
+
     const body = await request.json()
     const validation = appSettingsUpdateSchema.safeParse(body)
     if (!validation.success) {
@@ -41,7 +47,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const settings = await updateAppSettings(validation.data)
-    return NextResponse.json(toPublicSettings(settings))
+    return NextResponse.json(toPublicSettings(settings, true))
   } catch (error) {
     console.error('Error saving settings:', error)
     return NextResponse.json({ error: 'Failed to save settings' }, { status: 500 })

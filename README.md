@@ -1,6 +1,6 @@
-# Masonic Bar Membership Management Platform
+# Membership Manager
 
-A comprehensive membership discount card management platform for the Masonic Hall bar, built with Next.js 16 and Firebase (Firestore).
+An Ashlar Technologies membership discount card platform, built with Next.js 16 and Firebase (Firestore).
 
 ## Features
 
@@ -8,7 +8,7 @@ A comprehensive membership discount card management platform for the Masonic Hal
 - **Digital Membership Cards**: QR code-based ewallet tickets (Apple Wallet compatible)
 - **Physical Card Support**: Magstripe card encoding with prefix configuration
 - **Subscription Management**: Multiple subscription plans with annual duration support
-- **Payment Integration**: Pixl Pay integration for card and open banking payments
+- **Payment Integration**: Hope Macy open banking (PIS) for memberships and credit packs
 - **Card Issuance Queue**: Bar manager interface for processing physical cards
 - **Till System Integration**: API integration for enabling/disabling cards at the point of sale
 - **Renewal Reminders**: Automated email notifications for expiring memberships
@@ -80,30 +80,62 @@ firebase deploy --only firestore
 
 ## Local Development
 
-This matches the live Firebase Hosting + Firestore shape, the same way Pixl Payments mirrors GCP in Docker. Next.js on the host is the Hosting / Cloud Functions stand-in.
+This matches the live Firebase Hosting + Firestore shape using local emulators in Docker. Nothing here talks to paid Firebase/GCP APIs.
 
-| Live (Firebase / GCP) | Local (Docker) |
-|-----------------------|----------------|
+| Live (Firebase / GCP) | Local (Docker / Hyper-V) |
+|-----------------------|--------------------------|
 | Firestore | Firestore emulator (`masonic-firebase`, port 8080) |
 | Firebase Auth | Auth emulator (port 9099) |
-| Firebase Hosting + Cloud Functions | `npm run dev` on the host (port 3000) |
-| Production mail | Mailpit at [http://127.0.0.1:8125](http://127.0.0.1:8125) |
+| Firebase Hosting + Cloud Functions (`frameworksBackend`) | `npm run dev` on the host, **or** the `web` container (`next start`) |
+| Production mail | Mailpit at `http://relay.ashlartechnologies.com` (SMTP loopback `:1125`) |
+| Cloud Scheduler | Call `/api/cron/*` by hand (no scheduler VM) |
+| Cloud Console / Docker Desktop | Portainer CE at `http://portainer.ashlartechnologies.com` |
+| Hosting custom domains | Traefik on **:80 / :443** (`membership.ashlartechnologies.com`, …) |
 
 ```bash
-# One-time / everyday bootstrap
+# One-time / everyday bootstrap (emulators only)
 bash deploy/local/setup.sh
 # or: npm run local:setup
 
-# Run the app (Hosting equivalent)
+# Run the app (Hosting equivalent, laptop)
 npm run dev
 ```
 
 Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Emulator UI: [http://127.0.0.1:4000](http://127.0.0.1:4000).
 
 ```bash
+# Production-like Hosting stand-in (Next.js in Docker — do not also run npm run dev)
+bash deploy/local/setup.sh --hosting
+# or: npm run hosting:local
+
 # Reset emulator data
 bash deploy/local/setup.sh --reset-volumes
 ```
+
+### Hyper-V (Windows, no cloud cost)
+
+Run the same stack in a small Ubuntu Server VM. Hyper-V and Docker Engine are free; there is no Docker Desktop license. Use a Linux guest (not Windows) so Docker does not need nested virtualization.
+
+On the Windows host, from an elevated PowerShell prompt (Hyper-V already enabled):
+
+```powershell
+cd path\to\masonic-bar-membership\deploy\hyperv
+Set-ExecutionPolicy -Scope Process Bypass
+.\New-FirebaseMirrorVm.ps1
+Start-VM -Name masonic-firebase-mirror
+vmconnect localhost masonic-firebase-mirror
+```
+
+Install Ubuntu Server (minimal + OpenSSH). Inside the guest, clone this repo:
+
+```bash
+sudo apt-get update && sudo apt-get install -y git
+git clone <this-repo-url> masonic-bar-membership
+cd masonic-bar-membership
+bash deploy/hyperv/bootstrap.sh
+```
+
+The first bootstrap run installs Docker and asks you to log out/in. Run it again to build images and start the stack. From Windows, add the guest IP to `C:\Windows\System32\drivers\etc\hosts` for `ashlartechnologies.com`, `www.ashlartechnologies.com`, `membership.ashlartechnologies.com`, `portainer.ashlartechnologies.com`, `relay.ashlartechnologies.com`, and `traefik.ashlartechnologies.com`, then open those hostnames on ports 80/443. Set the Portainer admin password on first visit. VM default: 2 vCPU, 4 GB startup / 6 GB max, 40 GB dynamic disk, Default Switch NAT.
 
 ## Deployment to Firebase
 
@@ -206,9 +238,10 @@ gcloud scheduler jobs create http membership-renewal-reminders \
 - `POST /api/card-issuance/[id]/issue` - Mark card as issued
 
 ### Payments
-- `POST /api/payments/initiate` - Start a payment
-- `GET /api/payments/initiate` - Check payment status
-- `POST /api/payments/webhook` - Pixl Pay webhook handler
+- `POST /api/payments/initiate` - Start a Hope Macy open banking payment
+- `GET /api/payments/initiate` - Poll Hope Macy and apply a completed payment
+- `GET /api/payments/return` - Return URL after Hope Macy (poll + redirect)
+- `POST /api/payments/webhook` - Optional reconcile trigger (Hope Macy does not send webhooks)
 - `GET /api/payments/mock-checkout` - Mock payment page (dev)
 - `POST /api/payments/mock-complete` - Complete mock payment (dev)
 
@@ -218,8 +251,8 @@ gcloud scheduler jobs create http membership-renewal-reminders \
 - `GET /api/till-system/status` - Check card status in till system
 
 ### Cron Jobs
-- `POST /api/cron/check-expiry` - Check and expire memberships
-- `POST /api/cron/send-renewal-reminders` - Send renewal reminder emails
+- `POST /api/cron/check-expiry` - Check and expire memberships for the current venue (or all venues with `CRON_SECRET`)
+- `POST /api/cron/send-renewal-reminders` - Send expiry reminder emails for the current venue (or all venues with `CRON_SECRET`)
 
 ### Authentication
 - `POST /api/auth/login` - Admin login
@@ -235,22 +268,21 @@ Physical cards are encoded with Track 1 data in the format:
 
 Example: For prefix `;9998` and card number `1500`, the track data is `;99981500`
 
-Configure the prefix in environment variables:
-```
-MAGSTRIPE_PREFIX=;9998
-```
+Configure the prefix per venue in Venue settings (default `;9998`).
 
 ## Integration Notes
 
-### Pixl Pay
-- Configure `PIXL_PAY_API_URL` and `PIXL_PAY_API_KEY` when the Pixl Pay platform is ready
-- Supports both card payments (Dojo) and open banking
-- Webhook endpoint at `/api/payments/webhook` for payment status updates
+### Hope Macy
+- Configure platform `HOPEMACY_APP_ID` and `HOPEMACY_APP_SECRET` (optional `HOPEMACY_BASE_URL`, default `https://pis.hopemacy.com/api/v1`)
+- Credit pack purchases pay into the platform account: `BANK_ACCOUNT_NAME`, `BANK_SORT_CODE`, `BANK_ACCOUNT_NUMBER`
+- Membership payouts use each venue’s own sort code and account number (Venue settings)
+- Open banking only (no card acquiring). Hope Macy has no outbound webhooks — status is polled on return
+- Locally, empty App ID falls back to mock checkout
 
 ### Till System
-- Configure `TILL_SYSTEM_API_URL` and `TILL_SYSTEM_API_KEY` when ready
+- Configure each venue’s till API URL and key in Venue settings
 - Cards are automatically enabled when issued
-- Cards are automatically disabled when memberships expire
+- Cards are automatically disabled when memberships expire at that venue
 
 ### Apple Wallet
 - Requires Apple Developer Program membership
@@ -264,7 +296,7 @@ MAGSTRIPE_PREFIX=;9998
 
 ## Admin Dashboard
 
-Access the admin dashboard at `/admin` with sections for:
+Access the admin dashboard at `/admin`. You will be asked to sign in at `/admin/login`. Sections include:
 - Dashboard overview with stats
 - Member management
 - Card number inventory

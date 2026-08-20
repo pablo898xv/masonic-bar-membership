@@ -1,11 +1,10 @@
-import { systemConfigCollection } from './db'
+import { systemConfigCollection, tenantsCollection } from './db'
 
 export const APP_SETTINGS_KEY = 'appSettings'
 
 export const SECRET_SETTING_KEYS = [
-  'pixlPayApiKey',
-  'pixlPayWebhookSecret',
-  'tillSystemApiKey',
+  'hopeMacyAppSecret',
+  'bankAccountNumber',
   'smtpPass',
   'passCertificatePassword',
   'googleWalletServiceAccountJson',
@@ -14,13 +13,13 @@ export const SECRET_SETTING_KEYS = [
 export type SecretSettingKey = (typeof SECRET_SETTING_KEYS)[number]
 
 export type AppSettings = {
-  magstripePrefix: string
-  pixlPayApiUrl: string
-  pixlPayApiKey: string
-  pixlPayMerchantId: string
-  pixlPayWebhookSecret: string
-  tillSystemApiUrl: string
-  tillSystemApiKey: string
+  hopeMacyBaseUrl: string
+  hopeMacyAppId: string
+  hopeMacyAppSecret: string
+  hopeMacyMaxAmount: string
+  bankAccountName: string
+  bankSortCode: string
+  bankAccountNumber: string
   smtpHost: string
   smtpPort: string
   smtpSecure: string
@@ -39,13 +38,13 @@ export type AppSettings = {
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
-  magstripePrefix: ';9998',
-  pixlPayApiUrl: '',
-  pixlPayApiKey: '',
-  pixlPayMerchantId: '',
-  pixlPayWebhookSecret: '',
-  tillSystemApiUrl: '',
-  tillSystemApiKey: '',
+  hopeMacyBaseUrl: 'https://pis.hopemacy.com/api/v1',
+  hopeMacyAppId: '',
+  hopeMacyAppSecret: '',
+  hopeMacyMaxAmount: '1000',
+  bankAccountName: 'Ashlar Technologies',
+  bankSortCode: '',
+  bankAccountNumber: '',
   smtpHost: '',
   smtpPort: '587',
   smtpSecure: 'false',
@@ -68,13 +67,13 @@ const SECRET_SET = new Set<string>(SECRET_SETTING_KEYS)
 
 function envOverrides(): Partial<AppSettings> {
   const env: Partial<AppSettings> = {
-    magstripePrefix: process.env.MAGSTRIPE_PREFIX,
-    pixlPayApiUrl: process.env.PIXL_PAY_API_URL,
-    pixlPayApiKey: process.env.PIXL_PAY_API_KEY,
-    pixlPayMerchantId: process.env.PIXL_PAY_MERCHANT_ID,
-    pixlPayWebhookSecret: process.env.PIXL_PAY_WEBHOOK_SECRET,
-    tillSystemApiUrl: process.env.TILL_SYSTEM_API_URL,
-    tillSystemApiKey: process.env.TILL_SYSTEM_API_KEY,
+    hopeMacyBaseUrl: process.env.HOPEMACY_BASE_URL,
+    hopeMacyAppId: process.env.HOPEMACY_APP_ID,
+    hopeMacyAppSecret: process.env.HOPEMACY_APP_SECRET,
+    hopeMacyMaxAmount: process.env.HOPEMACY_MAX_AMOUNT,
+    bankAccountName: process.env.BANK_ACCOUNT_NAME,
+    bankSortCode: process.env.BANK_SORT_CODE,
+    bankAccountNumber: process.env.BANK_ACCOUNT_NUMBER,
     smtpHost: process.env.SMTP_HOST,
     smtpPort: process.env.SMTP_PORT,
     smtpSecure: process.env.SMTP_SECURE,
@@ -137,13 +136,18 @@ export async function getAppSettings(): Promise<AppSettings> {
   return value
 }
 
-export async function getMagstripePrefix(): Promise<string> {
-  const settings = await getAppSettings()
-  return settings.magstripePrefix || APP_SETTINGS_DEFAULTS.magstripePrefix
+export const DEFAULT_MAGSTRIPE_PREFIX = ';9998'
+
+export async function getMagstripePrefix(tenantId?: string): Promise<string> {
+  if (tenantId) {
+    const tenant = await tenantsCollection.findById(tenantId)
+    if (tenant?.magstripePrefix) return tenant.magstripePrefix
+  }
+  return DEFAULT_MAGSTRIPE_PREFIX
 }
 
-export async function formatMagstripeData(cardNumber: number): Promise<string> {
-  return `${await getMagstripePrefix()}${cardNumber}`
+export async function formatMagstripeData(cardNumber: number, tenantId?: string): Promise<string> {
+  return `${await getMagstripePrefix(tenantId)}${cardNumber}`
 }
 
 export async function updateAppSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -161,15 +165,33 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Ap
   return getAppSettings()
 }
 
-export function toPublicSettings(settings: AppSettings) {
+export function toPublicSettings(settings: AppSettings, platformAdmin = false) {
+  const shared = {
+    hopeMacyConfigured: Boolean(settings.hopeMacyAppId && settings.hopeMacyAppSecret),
+    emailConfigured: Boolean(settings.smtpHost),
+    walletConfigured: Boolean(
+      settings.passTypeIdentifier &&
+        settings.teamIdentifier &&
+        settings.passCertificatePath
+    ),
+    googleWalletConfigured: Boolean(
+      settings.googleWalletIssuerId &&
+        (settings.googleWalletServiceAccountJson || settings.googleWalletServiceAccountPath)
+    ),
+    canManagePlatformIntegrations: platformAdmin,
+  }
+
+  if (!platformAdmin) return shared
+
   return {
-    magstripePrefix: settings.magstripePrefix,
-    pixlPayApiUrl: settings.pixlPayApiUrl,
-    pixlPayApiKeySet: Boolean(settings.pixlPayApiKey),
-    pixlPayMerchantId: settings.pixlPayMerchantId,
-    pixlPayWebhookSecretSet: Boolean(settings.pixlPayWebhookSecret),
-    tillSystemApiUrl: settings.tillSystemApiUrl,
-    tillSystemApiKeySet: Boolean(settings.tillSystemApiKey),
+    ...shared,
+    hopeMacyBaseUrl: settings.hopeMacyBaseUrl,
+    hopeMacyAppId: settings.hopeMacyAppId,
+    hopeMacyAppSecretSet: Boolean(settings.hopeMacyAppSecret),
+    hopeMacyMaxAmount: settings.hopeMacyMaxAmount,
+    bankAccountName: settings.bankAccountName,
+    bankSortCode: settings.bankSortCode,
+    bankAccountNumberSet: Boolean(settings.bankAccountNumber),
     smtpHost: settings.smtpHost,
     smtpPort: settings.smtpPort,
     smtpSecure: settings.smtpSecure === 'true',
@@ -185,19 +207,6 @@ export function toPublicSettings(settings: AppSettings) {
     googleWalletServiceAccountPath: settings.googleWalletServiceAccountPath,
     googleWalletServiceAccountJsonSet: Boolean(settings.googleWalletServiceAccountJson),
     googleWalletLogoUrl: settings.googleWalletLogoUrl,
-    pixlPayConfigured: Boolean(settings.pixlPayApiUrl && settings.pixlPayApiKey),
-    tillConfigured: Boolean(settings.tillSystemApiUrl && settings.tillSystemApiKey),
-    emailConfigured: Boolean(settings.smtpHost),
-    walletConfigured: Boolean(
-      settings.passTypeIdentifier &&
-        settings.teamIdentifier &&
-        settings.passCertificatePath &&
-        settings.passCertificatePassword
-    ),
-    googleWalletConfigured: Boolean(
-      settings.googleWalletIssuerId &&
-        (settings.googleWalletServiceAccountJson || settings.googleWalletServiceAccountPath)
-    ),
   }
 }
 

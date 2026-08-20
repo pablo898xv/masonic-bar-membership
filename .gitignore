@@ -26,6 +26,12 @@
 
 # misc
 .DS_Store
+
+# Apple Wallet / TLS private material
+/certs/
+*.key
+*.p12
+*.cer
 *.pem
 
 # debug

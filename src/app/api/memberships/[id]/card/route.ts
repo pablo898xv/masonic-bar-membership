@@ -35,7 +35,7 @@ export async function GET(
 
     let qrCodeImage: string | null = null
     if (hasDigitalCard(membership.cardType) && membership.status === 'ACTIVE') {
-      const qrData = await formatMembershipQRData(membershipNumber.cardNumber)
+      const qrData = await formatMembershipQRData(membershipNumber.cardNumber, membership.tenantId)
       qrCodeImage = await generateQRCodeDataURL(qrData, { width: 360 })
     }
 

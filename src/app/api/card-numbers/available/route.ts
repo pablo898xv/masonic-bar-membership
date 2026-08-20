@@ -1,9 +1,13 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { membershipNumbersCollection } from '@/lib/db'
+import { requireTenant } from '@/lib/tenancy'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const availableNumber = await membershipNumbersCollection.findFirstAvailable()
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
+    const availableNumber = await membershipNumbersCollection.findFirstAvailable(tenant.id)
     
     if (!availableNumber) {
       return NextResponse.json(

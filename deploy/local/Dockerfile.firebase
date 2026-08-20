@@ -14,6 +14,6 @@ RUN mkdir -p /firebase/data
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE 4000 4400 4500 8080 9099
+EXPOSE 4000 4400 4500 8080 9099 9150
 
 ENTRYPOINT ["/entrypoint.sh"]

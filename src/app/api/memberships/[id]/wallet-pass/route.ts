@@ -7,9 +7,11 @@ import {
   walletPassesCollection 
 } from '@/lib/db'
 import { generateQRCodeBuffer, formatMembershipQRData } from '@/lib/qrcode'
-import { generateWalletPass, isWalletPassConfigured } from '@/lib/wallet-pass'
+import { generatePkpassFile, generateWalletPass } from '@/lib/wallet-pass'
 import { getAppSettings } from '@/lib/settings'
 import { v4 as uuidv4 } from 'uuid'
+
+export const runtime = 'nodejs'
 
 export async function GET(
   request: NextRequest,
@@ -49,12 +51,13 @@ export async function GET(
     }
     
     let walletPass = await walletPassesCollection.findByMembershipId(id)
-    const qrData = await formatMembershipQRData(membershipNumber.cardNumber)
+    const qrData = await formatMembershipQRData(membershipNumber.cardNumber, membership.tenantId)
 
     if (!walletPass) {
       const settings = await getAppSettings()
       walletPass = await walletPassesCollection.create({
         membershipId: id,
+        tenantId: membership.tenantId,
         passTypeId: settings.passTypeIdentifier || 'pass.com.masonicbar.membership',
         serialNumber: uuidv4(),
         authToken: uuidv4(),
@@ -69,26 +72,31 @@ export async function GET(
     }
     
     if (format === 'pkpass') {
-      if (!(await isWalletPassConfigured())) {
-        return NextResponse.json(
-          { error: 'Apple Wallet pass generation not configured' },
-          { status: 501 }
-        )
-      }
-      
       const generatedPass = await generateWalletPass({
         cardNumber: membershipNumber.cardNumber,
         memberName: member.name,
         memberEmail: member.email,
         subscriptionName: subscriptionPlan.name,
         expiryDate: membership.expiryDate!,
+        tenantId: membership.tenantId,
+        serialNumber: walletPass.serialNumber,
+        authToken: walletPass.authToken,
       })
-      
-      return NextResponse.json({
-        message: 'Apple Wallet pass generation requires certificate configuration',
-        passData: generatedPass.passData,
-        qrCodeImage: generatedPass.qrCodeImage,
-      }, { status: 501 })
+
+      const pkpass = await generatePkpassFile(generatedPass.passData)
+      if (!pkpass) {
+        return NextResponse.json(
+          { error: 'Apple Wallet pass generation not configured' },
+          { status: 501 }
+        )
+      }
+
+      return new NextResponse(new Uint8Array(pkpass), {
+        headers: {
+          'Content-Type': 'application/vnd.apple.pkpass',
+          'Content-Disposition': `attachment; filename="membership-${membershipNumber.cardNumber}.pkpass"`,
+        },
+      })
     }
     
     if (format === 'preview') {

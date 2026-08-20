@@ -37,6 +37,9 @@ export default function MembershipCardPage() {
       }
 
       try {
+        if (justPaid) {
+          await fetch(`/api/payments/initiate?membershipId=${encodeURIComponent(params.id)}`)
+        }
         const res = await fetch(`/api/memberships/${params.id}/card?token=${encodeURIComponent(token)}`)
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Unable to load card')
@@ -49,7 +52,7 @@ export default function MembershipCardPage() {
     }
 
     load()
-  }, [params.id, token])
+  }, [params.id, token, justPaid])
 
   const downloadQr = () => {
     if (!card?.qrCodeImage) return

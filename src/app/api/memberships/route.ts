@@ -12,9 +12,11 @@ import { membershipPurchaseSchema } from '@/lib/validation'
 import { fulfillPaidMembership } from '@/lib/fulfill-membership'
 import { formatMagstripeData } from '@/lib/settings'
 import { v4 as uuidv4 } from 'uuid'
+import { requireAdmin } from '@/lib/auth'
+import { assertCreditsAvailable, creditsNeeded, requireTenant } from '@/lib/tenancy'
 
-async function nextCardNumber() {
-  const existing = await membershipNumbersCollection.findFirstAvailable()
+async function nextCardNumber(tenantId: string) {
+  const existing = await membershipNumbersCollection.findFirstAvailable(tenantId)
   if (existing) return existing
 
   const local = process.env.FIRESTORE_EMULATOR_HOST || process.env.USE_LOCAL_DB === 'true'
@@ -24,13 +26,17 @@ async function nextCardNumber() {
     Array.from({ length: 200 }, (_, index) => ({
       cardNumber: 1500 + index,
       batchId: 'local-seed',
-    }))
+    })),
+    tenantId
   )
-  return membershipNumbersCollection.findFirstAvailable()
+  return membershipNumbersCollection.findFirstAvailable(tenantId)
 }
 
 export async function GET(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { searchParams } = new URL(request.url)
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
@@ -38,6 +44,7 @@ export async function GET(request: NextRequest) {
     const cardType = searchParams.get('cardType') || undefined
     
     const { memberships, total } = await membershipsCollection.findMany({
+      tenantId: tenant.id,
       status,
       cardType,
       take: limit,
@@ -72,6 +79,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const body = await request.json()
     
     const validation = membershipPurchaseSchema.safeParse(body)
@@ -84,11 +94,15 @@ export async function POST(request: NextRequest) {
     
     const { memberId, subscriptionPlanId, cardType, paymentMethod, adminIssued } = validation.data
 
-    if (paymentMethod === 'COMPLIMENTARY' && adminIssued !== true) {
-      return NextResponse.json(
-        { error: 'Complimentary memberships can only be issued by an admin' },
-        { status: 403 }
-      )
+    if (paymentMethod === 'COMPLIMENTARY') {
+      const { error: authError } = await requireAdmin(request)
+      if (authError) return authError
+      if (adminIssued !== true) {
+        return NextResponse.json(
+          { error: 'Complimentary memberships can only be issued by an admin' },
+          { status: 403 }
+        )
+      }
     }
     
     const [member, subscriptionPlan] = await Promise.all([
@@ -103,8 +117,18 @@ export async function POST(request: NextRequest) {
     if (!subscriptionPlan || !subscriptionPlan.isActive) {
       return NextResponse.json({ error: 'Subscription plan not found or inactive' }, { status: 404 })
     }
+
+    if (member.tenantId !== tenant.id || subscriptionPlan.tenantId !== tenant.id) {
+      return NextResponse.json({ error: 'Member or plan does not belong to this venue' }, { status: 403 })
+    }
+
+    const needed = creditsNeeded(cardType)
+    const credits = await assertCreditsAvailable(tenant.id, needed)
+    if (!credits.ok) {
+      return NextResponse.json({ error: credits.error }, { status: credits.status })
+    }
     
-    const availableNumber = await nextCardNumber()
+    const availableNumber = await nextCardNumber(tenant.id)
     
     if (!availableNumber) {
       return NextResponse.json(
@@ -120,6 +144,7 @@ export async function POST(request: NextRequest) {
     
     const isComplimentary = paymentMethod === 'COMPLIMENTARY'
     const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
+      tenantId: tenant.id,
       memberId,
       membershipNumberId: availableNumber.id,
       subscriptionPlanId,
@@ -134,10 +159,11 @@ export async function POST(request: NextRequest) {
     const membership = await membershipsCollection.create(membershipData)
     
     if (cardType === 'PHYSICAL_CARD') {
-      const magstripeData = await formatMagstripeData(availableNumber.cardNumber)
+      const magstripeData = await formatMagstripeData(availableNumber.cardNumber, tenant.id)
       
       await cardIssuancesCollection.create({
         membershipId: membership.id,
+        tenantId: tenant.id,
         queueStatus: isComplimentary ? 'READY_TO_ENCODE' : 'PENDING',
         magstripeData,
       })
@@ -145,6 +171,7 @@ export async function POST(request: NextRequest) {
 
     if (isComplimentary) {
       await paymentTransactionsCollection.create({
+        tenantId: tenant.id,
         membershipId: membership.id,
         amount: 0,
         currency: subscriptionPlan.currency,
@@ -174,7 +201,11 @@ export async function POST(request: NextRequest) {
         membershipId: membership.id
       }
     }, { status: 201 })
-  } catch (error) {
+    } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create membership'
+    if (message.includes('credits')) {
+      return NextResponse.json({ error: message }, { status: 402 })
+    }
     console.error('Error creating membership:', error)
     return NextResponse.json({ error: 'Failed to create membership' }, { status: 500 })
   }

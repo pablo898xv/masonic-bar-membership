@@ -1,11 +1,4 @@
-import { getAppSettings } from './settings'
-
-/**
- * Till System Integration Module
- *
- * Configuration can be saved on the admin Settings page, with environment
- * variables used as a fallback.
- */
+import { tenantsCollection } from './db'
 
 export interface TillSystemCard {
   cardNumber: string
@@ -28,41 +21,31 @@ export interface TillSystemResponse {
 }
 
 class TillSystemClient {
-  private baseUrl = ''
-  private apiKey = ''
+  constructor(
+    private baseUrl: string,
+    private apiKey: string
+  ) {}
 
-  private async load() {
-    const settings = await getAppSettings()
-    this.baseUrl = settings.tillSystemApiUrl
-    this.apiKey = settings.tillSystemApiKey
+  isConfigured() {
+    return Boolean(this.baseUrl && this.apiKey)
   }
 
   private get headers() {
     return {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${this.apiKey}`,
+      Authorization: `Bearer ${this.apiKey}`,
     }
   }
 
-  /**
-   * Check if the till system is configured
-   */
-  async isConfigured(): Promise<boolean> {
-    await this.load()
-    return !!(this.baseUrl && this.apiKey)
-  }
-
-  /**
-   * Enable a membership card in the till system
-   * 
-   * This should be called when:
-   * 1. A QR code membership is activated (payment completed)
-   * 2. A physical card is issued to the member
-   */
   async enableCard(card: TillSystemCard): Promise<TillSystemResponse> {
-    if (!(await this.isConfigured())) {
+    if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
-      return this.mockEnableCard(card)
+      return {
+        success: true,
+        cardId: `mock_${card.cardNumber}_${Date.now()}`,
+        message: 'Card enabled successfully (mock)',
+        status: 'ACTIVE',
+      }
     }
 
     try {
@@ -101,16 +84,8 @@ class TillSystemClient {
     }
   }
 
-  /**
-   * Disable a membership card in the till system
-   * 
-   * This should be called when:
-   * 1. A membership expires
-   * 2. A membership is cancelled/refunded
-   * 3. A card is reported lost/stolen
-   */
   async disableCard(request: TillSystemDisableRequest): Promise<TillSystemResponse> {
-    if (!(await this.isConfigured())) {
+    if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
       return { success: true, message: 'Card disabled (mock)', status: 'INACTIVE' }
     }
@@ -147,11 +122,8 @@ class TillSystemClient {
     }
   }
 
-  /**
-   * Check the status of a card in the till system
-   */
   async getCardStatus(cardNumber: string): Promise<TillSystemResponse> {
-    if (!(await this.isConfigured())) {
+    if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
       return { success: true, message: 'Status check (mock)', status: 'INACTIVE', data: {} }
     }
@@ -186,11 +158,8 @@ class TillSystemClient {
     }
   }
 
-  /**
-   * Extend the validity of a card (for renewals)
-   */
   async extendCard(cardNumber: string, newValidUntil: Date): Promise<TillSystemResponse> {
-    if (!(await this.isConfigured())) {
+    if (!this.isConfigured()) {
       console.warn('Till system not configured, returning mock response')
       return { success: true, message: 'Card extended (mock)', status: 'ACTIVE' }
     }
@@ -225,20 +194,9 @@ class TillSystemClient {
       }
     }
   }
-
-  /**
-   * Mock implementation for development/testing
-   */
-  private mockEnableCard(card: TillSystemCard): TillSystemResponse {
-    console.log('Mock till system: Enabling card', card.cardNumber)
-    return {
-      success: true,
-      cardId: `mock_${card.cardNumber}_${Date.now()}`,
-      message: 'Card enabled successfully (mock)',
-      status: 'ACTIVE',
-    }
-  }
 }
 
-export const tillSystem = new TillSystemClient()
-export default tillSystem
+export async function tillSystemFor(tenantId: string) {
+  const tenant = await tenantsCollection.findById(tenantId)
+  return new TillSystemClient(tenant?.tillSystemApiUrl || '', tenant?.tillSystemApiKey || '')
+}

@@ -1,19 +1,15 @@
+import { existsSync, readFileSync, statSync } from 'fs'
+import path from 'path'
+import { PKPass } from 'passkit-generator'
 import { v4 as uuid } from 'uuid'
 import { format } from 'date-fns'
 import { generateQRCodeBuffer, formatMembershipQRData } from './qrcode'
-import { getAppSettings } from './settings'
+import { AppSettings, getAppSettings } from './settings'
 
-/**
- * Apple Wallet Pass Configuration
- * 
- * To create actual Apple Wallet passes, you need:
- * 1. Apple Developer account with Pass Type ID
- * 2. Pass signing certificate (.p12 file)
- * 3. passkit-generator or similar library configured with certificates
- * 
- * This module provides the pass data structure and a mock implementation
- * that returns pass metadata and QR code for display purposes.
- */
+const LOCAL_CERT_DIR = path.join(process.cwd(), 'certs', 'apple-wallet')
+const LOCAL_PASS_TYPE_ID = 'pass.com.ashlartechnologies.membership'
+const LOCAL_TEAM_ID = 'XVM6L7837J'
+const WALLET_ASSETS_DIR = path.join(process.cwd(), 'src', 'lib', 'wallet-assets')
 
 export interface WalletPassData {
   passTypeId: string
@@ -64,32 +60,79 @@ export interface GeneratedPass {
   passUrl?: string
 }
 
-/**
- * Generate wallet pass data for a membership
- */
+function certDirectory(settings: AppSettings) {
+  const configured = settings.passCertificatePath.trim()
+  const resolved = configured
+    ? path.isAbsolute(configured)
+      ? configured
+      : path.join(process.cwd(), configured)
+    : LOCAL_CERT_DIR
+  if (existsSync(resolved) && !statSync(resolved).isDirectory()) {
+    return path.dirname(resolved)
+  }
+  return resolved
+}
+
+function loadWalletCertificates(settings: AppSettings) {
+  const dir = certDirectory(settings)
+  const signerCertPath = path.join(dir, 'pass.pem')
+  const signerKeyPath = path.join(dir, 'pass.key')
+  const wwdrPath = path.join(dir, 'wwdr.pem')
+  if (![signerCertPath, signerKeyPath, wwdrPath].every((file) => existsSync(file))) {
+    return null
+  }
+
+  return {
+    wwdr: readFileSync(wwdrPath),
+    signerCert: readFileSync(signerCertPath),
+    signerKey: readFileSync(signerKeyPath),
+    signerKeyPassphrase: settings.passCertificatePassword || undefined,
+  }
+}
+
+function passIdentity(settings: AppSettings) {
+  const hasLocalCerts = Boolean(loadWalletCertificates(settings))
+  return {
+    passTypeId: settings.passTypeIdentifier.trim() || (hasLocalCerts ? LOCAL_PASS_TYPE_ID : ''),
+    teamIdentifier: settings.teamIdentifier.trim() || (hasLocalCerts ? LOCAL_TEAM_ID : ''),
+  }
+}
+
+function passImages() {
+  const files = ['icon.png', 'icon@2x.png', 'icon@3x.png', 'logo.png', 'logo@2x.png']
+  const buffers: Record<string, Buffer> = {}
+  for (const name of files) {
+    const file = path.join(WALLET_ASSETS_DIR, name)
+    if (existsSync(file)) buffers[name] = readFileSync(file)
+  }
+  return buffers
+}
+
 export async function generateWalletPass(options: {
   cardNumber: number
   memberName: string
   memberEmail: string
   subscriptionName: string
   expiryDate: Date
+  tenantId?: string
+  serialNumber?: string
+  authToken?: string
 }): Promise<GeneratedPass> {
-  const { cardNumber, memberName, memberEmail, subscriptionName, expiryDate } = options
-  
+  const { cardNumber, memberName, memberEmail, subscriptionName, expiryDate, tenantId } = options
+
   const settings = await getAppSettings()
-  const passTypeId = settings.passTypeIdentifier || 'pass.com.masonichall.membership'
-  const teamIdentifier = settings.teamIdentifier || 'TEAM_ID'
-  
-  const serialNumber = uuid()
-  const authToken = uuid().replace(/-/g, '')
-  const qrCodeData = await formatMembershipQRData(cardNumber)
-  
+  const { passTypeId, teamIdentifier } = passIdentity(settings)
+
+  const serialNumber = options.serialNumber || uuid()
+  const authToken = options.authToken || uuid().replace(/-/g, '')
+  const qrCodeData = await formatMembershipQRData(cardNumber, tenantId)
+
   const passData: WalletPassData = {
     passTypeId,
     serialNumber,
     authToken,
     teamIdentifier,
-    organizationName: 'Membership Manager',
+    organizationName: 'Ashlar Technologies',
     description: 'Membership Card',
     logoText: 'Membership Manager',
     foregroundColor: 'rgb(255, 255, 255)',
@@ -145,10 +188,10 @@ export async function generateWalletPass(options: {
     ],
     expirationDate: expiryDate.toISOString(),
   }
-  
+
   const qrCodeBuffer = await generateQRCodeBuffer(qrCodeData, { width: 300 })
   const qrCodeImage = `data:image/png;base64,${qrCodeBuffer.toString('base64')}`
-  
+
   return {
     serialNumber,
     authToken,
@@ -158,47 +201,63 @@ export async function generateWalletPass(options: {
   }
 }
 
-/**
- * Check if Apple Wallet pass generation is configured
- */
 export async function isWalletPassConfigured(): Promise<boolean> {
   const settings = await getAppSettings()
-  return Boolean(
-    settings.passTypeIdentifier &&
-      settings.teamIdentifier &&
-      settings.passCertificatePath &&
-      settings.passCertificatePassword
-  )
+  const { passTypeId, teamIdentifier } = passIdentity(settings)
+  return Boolean(passTypeId && teamIdentifier && loadWalletCertificates(settings))
 }
 
-/**
- * Generate actual .pkpass file (requires proper configuration)
- * 
- * This is a placeholder that returns null when not configured.
- * When properly configured with Apple certificates, this would
- * use passkit-generator to create a signed .pkpass file.
- */
 export async function generatePkpassFile(passData: WalletPassData): Promise<Buffer | null> {
-  if (!(await isWalletPassConfigured())) {
+  const settings = await getAppSettings()
+  const certificates = loadWalletCertificates(settings)
+  if (!certificates || !passData.passTypeId || !passData.teamIdentifier) {
     console.warn('Apple Wallet pass generation not configured')
     return null
   }
-  
-  // TODO: Implement actual .pkpass generation using passkit-generator
-  // This requires:
-  // 1. Import passkit-generator
-  // 2. Load certificates from PASS_CERTIFICATE_PATH
-  // 3. Configure pass template with images (icon, logo, strip)
-  // 4. Generate and sign the pass
-  
-  // Example implementation (requires passkit-generator setup):
-  // const pass = new PKPass({}, {
-  //   wwdr: fs.readFileSync('certs/wwdr.pem'),
-  //   signerCert: fs.readFileSync('certs/signerCert.pem'),
-  //   signerKey: fs.readFileSync('certs/signerKey.pem'),
-  //   signerKeyPassphrase: process.env.PASS_CERTIFICATE_PASSWORD,
-  // }, passData)
-  // return pass.getAsBuffer()
-  
-  return null
+
+  const images = passImages()
+  if (!images['icon.png']) {
+    throw new Error('Apple Wallet icon.png is missing from src/lib/wallet-assets')
+  }
+
+  const pass = new PKPass(
+    {
+      ...images,
+      'pass.json': Buffer.from(
+        JSON.stringify({
+          formatVersion: 1,
+          passTypeIdentifier: passData.passTypeId,
+          teamIdentifier: passData.teamIdentifier,
+          serialNumber: passData.serialNumber,
+          organizationName: passData.organizationName,
+          description: passData.description,
+          logoText: passData.logoText,
+          foregroundColor: passData.foregroundColor,
+          backgroundColor: passData.backgroundColor,
+          labelColor: passData.labelColor,
+          generic: {
+            primaryFields: passData.primaryFields,
+            secondaryFields: passData.secondaryFields,
+            auxiliaryFields: passData.auxiliaryFields,
+            backFields: passData.backFields,
+          },
+        })
+      ),
+    },
+    certificates,
+    {
+      serialNumber: passData.serialNumber,
+    }
+  )
+
+  pass.setBarcodes({
+    message: passData.barcode.message,
+    format: 'PKBarcodeFormatQR',
+    messageEncoding: 'iso-8859-1',
+  })
+  if (passData.expirationDate) {
+    pass.setExpirationDate(new Date(passData.expirationDate))
+  }
+
+  return pass.getAsBuffer()
 }

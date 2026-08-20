@@ -48,13 +48,13 @@ export const adminCreateSchema = z.object({
 })
 
 export const appSettingsUpdateSchema = z.object({
-  magstripePrefix: z.string().min(1).max(32).optional(),
-  pixlPayApiUrl: z.string().optional(),
-  pixlPayApiKey: z.string().optional(),
-  pixlPayMerchantId: z.string().optional(),
-  pixlPayWebhookSecret: z.string().optional(),
-  tillSystemApiUrl: z.string().optional(),
-  tillSystemApiKey: z.string().optional(),
+  hopeMacyBaseUrl: z.string().optional(),
+  hopeMacyAppId: z.string().optional(),
+  hopeMacyAppSecret: z.string().optional(),
+  hopeMacyMaxAmount: z.string().optional(),
+  bankAccountName: z.string().optional(),
+  bankSortCode: z.string().optional(),
+  bankAccountNumber: z.string().optional(),
   smtpHost: z.string().optional(),
   smtpPort: z.string().optional(),
   smtpSecure: z.enum(['true', 'false']).optional(),

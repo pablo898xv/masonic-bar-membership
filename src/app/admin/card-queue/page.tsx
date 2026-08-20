@@ -61,7 +61,10 @@ export default function CardQueuePage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [showInstructions, setShowInstructions] = useState(false)
   const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
+  const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const writer = useMsrx6()
+  const outOfCredits = creditBalance !== null && creditBalance < 1
+  const needsCredit = (issuance: CardIssuance) => issuance.membership.cardType === 'QR_CODE'
 
   const closeEncodeModal = () => {
     void writer.cancelOperation()
@@ -73,10 +76,17 @@ export default function CardQueuePage() {
   const fetchQueue = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/card-issuance/queue?includeCompleted=false')
+      const [res, tenantRes] = await Promise.all([
+        fetch('/api/card-issuance/queue?includeCompleted=false'),
+        fetch('/api/tenants/current'),
+      ])
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to fetch queue')
       setQueueData(data)
+      const tenantData = await tenantRes.json()
+      setCreditBalance(
+        typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
+      )
     } catch (error) {
       console.error('Error fetching queue:', error)
       setQueueData(null)
@@ -96,25 +106,36 @@ export default function CardQueuePage() {
       body: JSON.stringify({ encodedBy, notes })
     })
 
-    if (!res.ok) throw new Error('Failed to mark as encoded')
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || 'Failed to mark as encoded')
+    }
     await fetchQueue()
     setSelectedCard(null)
     setEncodeMessage(null)
   }
 
   const handleEncode = async (issuance: CardIssuance) => {
+    if (needsCredit(issuance) && outOfCredits) {
+      alert('No issuance credits remaining. Buy a credit pack before encoding a new physical card.')
+      return
+    }
     setActionLoading(true)
     try {
       await markEncoded(issuance, 'Bar Manager', 'Marked encoded manually')
     } catch (error) {
       console.error('Error encoding card:', error)
-      alert('Failed to mark card as encoded')
+      alert(error instanceof Error ? error.message : 'Failed to mark card as encoded')
     } finally {
       setActionLoading(false)
     }
   }
 
   const handleWriterEncode = async (issuance: CardIssuance) => {
+    if (needsCredit(issuance) && outOfCredits) {
+      setEncodeMessage('No issuance credits remaining. Buy a credit pack before issuing a physical card.')
+      return
+    }
     setActionLoading(true)
     setEncodeMessage('Sending write command. Swipe the blank card through the MSRx6 now.')
     try {
@@ -146,8 +167,8 @@ export default function CardQueuePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ issuedBy: 'Bar Manager' })
       })
-
-      if (!res.ok) throw new Error('Failed to issue card')
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Failed to issue card')
       
       const tillRes = await fetch('/api/till-system/enable', {
         method: 'POST',
@@ -163,7 +184,7 @@ export default function CardQueuePage() {
       setSelectedCard(null)
     } catch (error) {
       console.error('Error issuing card:', error)
-      alert('Failed to issue card')
+      alert(error instanceof Error ? error.message : 'Failed to issue card')
     } finally {
       setActionLoading(false)
     }
@@ -196,6 +217,13 @@ export default function CardQueuePage() {
           </Button>
         </div>
       </div>
+
+      {outOfCredits && (
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
+          This venue has no issuance credits left. Encoding a new physical card for a QR-only membership is blocked.{' '}
+          <a href="/admin/credits" className="underline">Buy a credit pack</a>. Replacement encodes of cards already charged still work.
+        </p>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -259,13 +287,18 @@ export default function CardQueuePage() {
                       Encode: <span className="font-bold">{issuance.magstripeData}</span>
                     </p>
                   </div>
-                  <Button size="sm" onClick={() => {
-                    setEncodeMessage(null)
-                    setSelectedCard(issuance)
-                    if (writer.connected) {
-                      void handleWriterEncode(issuance)
-                    }
-                  }}>
+                  <Button
+                    size="sm"
+                    disabled={needsCredit(issuance) && outOfCredits}
+                    onClick={() => {
+                      if (needsCredit(issuance) && outOfCredits) return
+                      setEncodeMessage(null)
+                      setSelectedCard(issuance)
+                      if (writer.connected) {
+                        void handleWriterEncode(issuance)
+                      }
+                    }}
+                  >
                     {writer.connected ? 'Encode' : 'Mark Encoded'}
                   </Button>
                 </div>
@@ -301,7 +334,13 @@ export default function CardQueuePage() {
                       {issuance.membership.member.phone}
                     </p>
                   </div>
-                  <Button size="sm" variant="primary" onClick={() => handleIssue(issuance)} loading={actionLoading}>
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    onClick={() => handleIssue(issuance)}
+                    loading={actionLoading}
+                    disabled={needsCredit(issuance) && outOfCredits}
+                  >
                     Issue to Member
                   </Button>
                 </div>
@@ -382,11 +421,20 @@ export default function CardQueuePage() {
               <Button variant="secondary" onClick={closeEncodeModal}>
                 Cancel
               </Button>
-              <Button variant="ghost" onClick={() => handleEncode(selectedCard)} loading={actionLoading}>
+              <Button
+                variant="ghost"
+                onClick={() => handleEncode(selectedCard)}
+                loading={actionLoading}
+                disabled={needsCredit(selectedCard) && outOfCredits}
+              >
                 Mark encoded manually
               </Button>
               {writer.connected && (
-                <Button onClick={() => handleWriterEncode(selectedCard)} loading={actionLoading}>
+                <Button
+                  onClick={() => handleWriterEncode(selectedCard)}
+                  loading={actionLoading}
+                  disabled={needsCredit(selectedCard) && outOfCredits}
+                >
                   {writer.phase === 'writing' || writer.phase === 'verifying' ? 'Waiting for swipe…' : 'Retry write'}
                 </Button>
               )}

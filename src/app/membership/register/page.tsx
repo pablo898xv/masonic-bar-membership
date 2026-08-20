@@ -30,7 +30,7 @@ export default function RegisterPage() {
     phone: '',
     subscriptionPlanId: '',
     cardType: 'QR_CODE',
-    paymentMethod: 'CARD'
+    paymentMethod: 'OPEN_BANKING'
   })
 
   useEffect(() => {
@@ -361,44 +361,10 @@ export default function RegisterPage() {
                 </div>
 
                 <div className="space-y-3">
-                  <label className="block text-sm font-medium text-gray-700">Payment Method</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <label
-                      className={`p-4 rounded-lg border-2 cursor-pointer text-center transition-colors ${
-                        formData.paymentMethod === 'CARD'
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="CARD"
-                        checked={formData.paymentMethod === 'CARD'}
-                        onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
-                        className="sr-only"
-                      />
-                      <p className="font-medium text-gray-900">Card Payment</p>
-                      <p className="text-xs text-gray-500 mt-1">Visa, Mastercard, etc.</p>
-                    </label>
-                    <label
-                      className={`p-4 rounded-lg border-2 cursor-pointer text-center transition-colors ${
-                        formData.paymentMethod === 'OPEN_BANKING'
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="paymentMethod"
-                        value="OPEN_BANKING"
-                        checked={formData.paymentMethod === 'OPEN_BANKING'}
-                        onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
-                        className="sr-only"
-                      />
-                      <p className="font-medium text-gray-900">Open Banking</p>
-                      <p className="text-xs text-gray-500 mt-1">Direct bank transfer</p>
-                    </label>
+                  <label className="block text-sm font-medium text-gray-700">Payment</label>
+                  <div className="p-4 rounded-lg border-2 border-blue-500 bg-blue-50">
+                    <p className="font-medium text-gray-900">Open banking</p>
+                    <p className="text-xs text-gray-500 mt-1">Pay from your bank via Hope Macy. You will be redirected to approve the payment.</p>
                   </div>
                 </div>
               </CardContent>

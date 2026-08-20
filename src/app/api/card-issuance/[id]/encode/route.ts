@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cardIssuancesCollection, membershipsCollection } from '@/lib/db'
+import { belongsToTenant, consumeIssuanceCredit, requireTenant } from '@/lib/tenancy'
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { tenant, error } = await requireTenant(request)
+    if (error || !tenant) return error!
+
     const { id } = await params
     const body = await request.json()
     const { encodedBy, notes } = body
     
     const issuance = await cardIssuancesCollection.findById(id)
     
-    if (!issuance) {
+    if (!issuance || !belongsToTenant(issuance, tenant.id)) {
       return NextResponse.json({ error: 'Card issuance not found' }, { status: 404 })
     }
     
@@ -30,7 +34,21 @@ export async function POST(
         { status: 400 }
       )
     }
-    
+
+    if (membership.cardType === 'QR_CODE') {
+      const charged = await consumeIssuanceCredit(
+        membership.tenantId,
+        membership.id,
+        'PHYSICAL_CARD',
+        undefined,
+        membership.membershipNumberId
+      )
+      if (!charged.ok) {
+        return NextResponse.json({ error: charged.error }, { status: charged.status })
+      }
+      await membershipsCollection.update(membership.id, { cardType: 'BOTH' })
+    }
+
     const updatedIssuance = await cardIssuancesCollection.update(id, {
       queueStatus: 'ENCODED',
       encodedAt: new Date(),
@@ -38,10 +56,6 @@ export async function POST(
       ...(typeof notes === 'string' && notes ? { notes } : {}),
     })
 
-    if (membership.cardType === 'QR_CODE') {
-      await membershipsCollection.update(membership.id, { cardType: 'BOTH' })
-    }
-    
     return NextResponse.json(updatedIssuance)
   } catch (error) {
     console.error('Error encoding card:', error)

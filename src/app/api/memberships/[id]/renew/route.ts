@@ -51,6 +51,7 @@ export async function POST(
     }
     
     const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
+      tenantId: existingMembership.tenantId,
       memberId: existingMembership.memberId,
       membershipNumberId: existingMembership.membershipNumberId,
       subscriptionPlanId,
@@ -65,10 +66,11 @@ export async function POST(
     const newMembership = await membershipsCollection.create(membershipData)
     
     if (existingMembership.cardType === 'PHYSICAL_CARD') {
-      const magstripeData = await formatMagstripeData(membershipNumber.cardNumber)
+      const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, existingMembership.tenantId)
       
       await cardIssuancesCollection.create({
         membershipId: newMembership.id,
+        tenantId: existingMembership.tenantId,
         queueStatus: 'PENDING',
         magstripeData,
         notes: `Renewal of membership ${existingMembership.id}`
