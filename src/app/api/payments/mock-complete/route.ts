@@ -1,18 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { membershipsCollection, paymentTransactionsCollection } from '@/lib/db'
 import { fulfillPaidMembership } from '@/lib/fulfill-membership'
+import { mockPaymentsAllowed } from '@/lib/hopemacy'
 import { creditsErrorResponse, fulfillCreditPurchase } from '@/lib/tenancy'
+
+function isMockPaymentId(value?: string | null) {
+  return Boolean(value && value.startsWith('mock_'))
+}
 
 export async function POST(request: NextRequest) {
   try {
+    if (!mockPaymentsAllowed()) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+
     const body = await request.json()
     const { membershipId, paymentId, status } = body
+
+    if (!isMockPaymentId(paymentId)) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
 
     if (body.kind === 'credits' || (!membershipId && paymentId)) {
       const transaction = paymentId
         ? await paymentTransactionsCollection.findByExternalId(paymentId)
         : null
-      if (!transaction?.creditPurchase) {
+      if (!transaction?.creditPurchase || !isMockPaymentId(transaction.externalId || paymentId)) {
         return NextResponse.json({ error: 'Credit pack purchase not found' }, { status: 404 })
       }
       if (status === 'success') {
@@ -28,7 +41,7 @@ export async function POST(request: NextRequest) {
 
     const membership = await membershipsCollection.findById(membershipId)
 
-    if (!membership) {
+    if (!membership || membership.paymentId !== paymentId || !isMockPaymentId(membership.paymentId)) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
 

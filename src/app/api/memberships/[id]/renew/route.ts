@@ -9,6 +9,8 @@ import {
 } from '@/lib/db'
 import { v4 as uuidv4 } from 'uuid'
 import { formatMagstripeData } from '@/lib/settings'
+import { canAccessMembership, membershipAccessToken, membershipNotFound } from '@/lib/membership-access'
+import { allocateCardShortCode } from '@/lib/card-link'
 
 export async function POST(
   request: NextRequest,
@@ -20,10 +22,12 @@ export async function POST(
     const { subscriptionPlanId, paymentMethod } = body
     
     const existingMembership = await membershipsCollection.findById(id)
-    
-    if (!existingMembership) {
-      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    const token = membershipAccessToken(request, body)
+
+    if (!canAccessMembership(request, existingMembership, token)) {
+      return membershipNotFound()
     }
+    if (!existingMembership) return membershipNotFound()
     
     if (!['ACTIVE', 'EXPIRED'].includes(existingMembership.status)) {
       return NextResponse.json(
@@ -61,6 +65,7 @@ export async function POST(
       paymentStatus: 'PENDING',
       tillSystemEnabled: false,
       accessToken: uuidv4(),
+      shortCode: await allocateCardShortCode(),
     }
     
     const newMembership = await membershipsCollection.create(membershipData)

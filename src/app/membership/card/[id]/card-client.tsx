@@ -13,6 +13,8 @@ interface CardData {
   status: string
   planName: string
   expiryDate?: string
+  tenantName?: string
+  logoUrl?: string
   qrCodeImage: string | null
   appleWalletAvailable: boolean
   googleWalletAvailable: boolean
@@ -38,7 +40,9 @@ export default function MembershipCardPage() {
 
       try {
         if (justPaid) {
-          await fetch(`/api/payments/initiate?membershipId=${encodeURIComponent(params.id)}`)
+          await fetch(
+            `/api/payments/initiate?membershipId=${encodeURIComponent(params.id)}&token=${encodeURIComponent(token)}`
+          )
         }
         const res = await fetch(`/api/memberships/${params.id}/card?token=${encodeURIComponent(token)}`)
         const data = await res.json()
@@ -88,7 +92,7 @@ export default function MembershipCardPage() {
   return (
     <div className="min-h-screen bg-slate-950 px-4 py-10 text-white">
       <div className="mx-auto max-w-md">
-        <p className="text-center text-sm text-slate-400">Membership Manager</p>
+        <p className="text-center text-sm text-slate-400">{card.tenantName || 'Membership Manager'}</p>
         <h1 className="mt-1 text-center text-2xl font-bold">
           {justPaid ? 'You are a member' : 'Your membership card'}
         </h1>
@@ -100,6 +104,9 @@ export default function MembershipCardPage() {
 
         <div className="mt-8 overflow-hidden rounded-3xl bg-gradient-to-br from-slate-800 to-slate-900 shadow-2xl ring-1 ring-white/10">
           <div className="px-6 py-5">
+            {card.logoUrl ? (
+              <img src={card.logoUrl} alt="" className="mb-4 h-14 max-w-[14rem] object-contain" />
+            ) : null}
             <p className="text-xs uppercase tracking-[0.2em] text-blue-300">Member</p>
             <p className="mt-1 text-2xl font-semibold">{card.memberName}</p>
             <p className="mt-1 text-slate-400">{card.planName}</p>

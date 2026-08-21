@@ -14,6 +14,7 @@ import { formatMagstripeData } from '@/lib/settings'
 import { v4 as uuidv4 } from 'uuid'
 import { requireAdmin } from '@/lib/auth'
 import { assertCreditsAvailable, creditsNeeded, requireTenant } from '@/lib/tenancy'
+import { allocateCardShortCode } from '@/lib/card-link'
 
 async function nextCardNumber(tenantId: string) {
   const existing = await membershipNumbersCollection.findFirstAvailable(tenantId)
@@ -34,6 +35,8 @@ async function nextCardNumber(tenantId: string) {
 
 export async function GET(request: NextRequest) {
   try {
+    const { error: authError } = await requireAdmin(request)
+    if (authError) return authError
     const { tenant, error } = await requireTenant(request)
     if (error || !tenant) return error!
 
@@ -154,6 +157,7 @@ export async function POST(request: NextRequest) {
       paymentStatus: isComplimentary ? 'COMPLETED' : 'PENDING',
       tillSystemEnabled: false,
       accessToken: uuidv4(),
+      shortCode: await allocateCardShortCode(),
     }
     
     const membership = await membershipsCollection.create(membershipData)

@@ -1,6 +1,6 @@
 {
   "name": "masonic-bar-membership",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -12,7 +12,9 @@
     "deploy:firestore": "firebase deploy --only firestore",
     "local:setup": "bash deploy/local/setup.sh",
     "emulators": "docker compose up -d",
-    "hosting:local": "bash deploy/local/setup.sh --hosting"
+    "hosting:local": "bash deploy/local/setup.sh --hosting",
+    "uat:sync": "bash deploy/uat/sync.sh",
+    "uat:sync:data": "bash deploy/uat/sync.sh --data"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

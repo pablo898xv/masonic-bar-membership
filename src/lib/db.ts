@@ -48,6 +48,7 @@ export interface Membership {
   tillSystemEnabled: boolean
   tillSystemEnabledAt?: Date
   accessToken?: string
+  shortCode?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -143,6 +144,9 @@ export interface Tenant {
   contactRole?: string
   contactEmail?: string
   contactPhone?: string
+  logoPng?: string
+  iconPng?: string
+  logoUpdatedAt?: Date
   createdAt: Date
   updatedAt: Date
 }
@@ -158,7 +162,7 @@ export interface TenantUser {
 export interface CreditLedgerEntry {
   id: string
   tenantId: string
-  type: 'ISSUE' | 'TOPUP' | 'GRANT' | 'ADJUSTMENT' | 'REFUND'
+  type: 'ISSUE' | 'TOPUP' | 'GRANT' | 'ADJUSTMENT' | 'REFUND' | 'SMS'
   amount: number
   format?: 'QR_CODE' | 'PHYSICAL_CARD'
   membershipId?: string
@@ -499,6 +503,16 @@ export const membershipsCollection = {
     const docRef = await db.collection(COLLECTIONS.memberships).doc(id).get()
     if (!docRef.exists) return null
     return fromFirestoreData<Membership>(id, docRef.data()!)
+  },
+
+  async findByShortCode(shortCode: string): Promise<Membership | null> {
+    const code = shortCode.trim()
+    if (!code) return null
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.memberships).where('shortCode', '==', code).limit(1).get()
+    if (snapshot.empty) return null
+    const doc = snapshot.docs[0]
+    return fromFirestoreData<Membership>(doc.id, doc.data())
   },
 
   async findByIdWithRelations(id: string): Promise<{

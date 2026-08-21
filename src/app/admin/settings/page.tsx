@@ -6,19 +6,24 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { VenuePaymentsCard } from '@/components/admin/venue-payments-card'
+import { VenueLogoUpload } from '@/components/admin/venue-logo-upload'
 
 type VenueOps = {
+  id: string
   magstripePrefix: string
   tillSystemApiUrl: string
   tillSystemApiKeySet: boolean
+  logoUrl: string
 }
 
 export default function SettingsPage() {
   const [message, setMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [ops, setOps] = useState<VenueOps>({
+    id: '',
     magstripePrefix: ';9998',
     tillSystemApiUrl: '',
     tillSystemApiKeySet: false,
+    logoUrl: '',
   })
   const [tillApiKey, setTillApiKey] = useState('')
   const [saving, setSaving] = useState<string | null>(null)
@@ -29,9 +34,11 @@ export default function SettingsPage() {
     const data = await res.json()
     if (!res.ok) throw new Error(data.error || 'Failed to load venue')
     setOps({
+      id: data.tenant.id || '',
       magstripePrefix: data.tenant.magstripePrefix || ';9998',
       tillSystemApiUrl: data.tenant.tillSystemApiUrl || '',
       tillSystemApiKeySet: Boolean(data.tenant.tillSystemApiKeySet),
+      logoUrl: data.tenant.logoUrl || '',
     })
   }
 
@@ -108,7 +115,7 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Venue settings</h1>
         <p className="text-gray-500 mt-1">
-          Payout account, till, magstripe, and membership reminders for this venue.
+          Branding, payout account, till, magstripe, and membership reminders for this venue.
         </p>
       </div>
 
@@ -123,6 +130,26 @@ export default function SettingsPage() {
           {message.text}
         </p>
       )}
+
+      <Card>
+        <CardHeader>
+          <h2 className="text-lg font-semibold text-gray-900">Venue logo</h2>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-gray-600 mb-4">
+            Used on the purchase screens, this admin site, and the Apple/Google Wallet pass.
+          </p>
+          {ops.id ? (
+            <VenueLogoUpload
+              tenantId={ops.id}
+              logoUrl={ops.logoUrl}
+              onUpdated={(logoUrl) => setOps((current) => ({ ...current, logoUrl }))}
+            />
+          ) : (
+            <p className="text-sm text-gray-500">Loading venue…</p>
+          )}
+        </CardContent>
+      </Card>
 
       <VenuePaymentsCard onSaved={(text) => setMessage({ type: 'ok', text })} />
 

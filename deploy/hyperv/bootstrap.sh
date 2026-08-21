@@ -44,13 +44,32 @@ if [ ! -f .env.local ]; then
   cp .env.local.example .env.local
 fi
 
+if ! grep -q '^JWT_SECRET=' .env.local || grep -q '^JWT_SECRET=local-dev-secret-not-for-production' .env.local; then
+  echo "==> Generating JWT_SECRET"
+  secret="$(openssl rand -hex 32)"
+  if grep -q '^JWT_SECRET=' .env.local; then
+    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${secret}|" .env.local
+  else
+    printf '\nJWT_SECRET=%s\n' "$secret" >> .env.local
+  fi
+fi
+if ! grep -q '^CRON_SECRET=' .env.local || grep -Eq '^CRON_SECRET=\s*$' .env.local; then
+  echo "==> Generating CRON_SECRET"
+  cron="$(openssl rand -hex 24)"
+  if grep -q '^CRON_SECRET=' .env.local; then
+    sed -i "s|^CRON_SECRET=.*|CRON_SECRET=${cron}|" .env.local
+  else
+    printf '\nCRON_SECRET=%s\n' "$cron" >> .env.local
+  fi
+fi
+
 # Advertise the VM IP in the public base URL when we can detect it.
 VM_IP="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"
 if [ -n "${VM_IP}" ]; then
   if grep -q '^NEXT_PUBLIC_BASE_URL=' .env.local; then
-    sed -i "s|^NEXT_PUBLIC_BASE_URL=.*|NEXT_PUBLIC_BASE_URL=http://membership.ashlartechnologies.com|" .env.local
+    sed -i "s|^NEXT_PUBLIC_BASE_URL=.*|NEXT_PUBLIC_BASE_URL=https://membership.ashlartechnologies.com|" .env.local
   else
-    printf '\nNEXT_PUBLIC_BASE_URL=http://membership.ashlartechnologies.com\n' >> .env.local
+    printf '\nNEXT_PUBLIC_BASE_URL=https://membership.ashlartechnologies.com\n' >> .env.local
   fi
 fi
 

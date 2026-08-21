@@ -75,3 +75,20 @@ export function packIsRevocable(entry: {
 }) {
   return !entry.revoked && entry.amount > 0 && (entry.type === 'GRANT' || entry.type === 'TOPUP') && Boolean(entry.packageKey)
 }
+
+export const DEFAULT_SMS_CREDIT_COST = 0.25
+
+export function roundCredits(amount: number) {
+  return Math.round((amount + Number.EPSILON) * 100) / 100
+}
+
+export function formatCredits(amount: number) {
+  const rounded = roundCredits(amount)
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2)
+}
+
+export function parseSmsCreditCost(raw?: string) {
+  const parsed = Number.parseFloat(raw || '')
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_SMS_CREDIT_COST
+  return roundCredits(parsed)
+}

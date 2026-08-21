@@ -39,6 +39,20 @@ type SettingsForm = {
   emailConfigured: boolean
   walletConfigured: boolean
   googleWalletConfigured: boolean
+  smsConfigured: boolean
+  smsCreditCost: string
+  twilioAccountSid: string
+  twilioAuthToken: string
+  twilioAuthTokenSet: boolean
+  twilioFromNumber: string
+  twilioLogFallback: boolean
+  creditsPerSms: string
+  smsWelcomeEnabled: boolean
+  smsRenewalEnabled: boolean
+  smsDigitalCardEnabled: boolean
+  smsWelcomeTemplate: string
+  smsRenewalTemplate: string
+  smsDigitalCardTemplate: string
   canManagePlatformIntegrations: boolean
 }
 
@@ -74,6 +88,20 @@ const emptyForm: SettingsForm = {
   emailConfigured: false,
   walletConfigured: false,
   googleWalletConfigured: false,
+  smsConfigured: false,
+  smsCreditCost: '0.25',
+  twilioAccountSid: '',
+  twilioAuthToken: '',
+  twilioAuthTokenSet: false,
+  twilioFromNumber: '',
+  twilioLogFallback: true,
+  creditsPerSms: '0.25',
+  smsWelcomeEnabled: true,
+  smsRenewalEnabled: true,
+  smsDigitalCardEnabled: true,
+  smsWelcomeTemplate: '',
+  smsRenewalTemplate: '',
+  smsDigitalCardTemplate: '',
   canManagePlatformIntegrations: false,
 }
 
@@ -87,6 +115,8 @@ export default function PlatformSettingsPage() {
   const [form, setForm] = useState<SettingsForm>(emptyForm)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
+  const [testPhone, setTestPhone] = useState('')
+  const [testingSms, setTestingSms] = useState(false)
   const [message, setMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [loadError, setLoadError] = useState('')
 
@@ -99,6 +129,7 @@ export default function PlatformSettingsPage() {
       smtpPass: '',
       passCertificatePassword: '',
       googleWalletServiceAccountJson: '',
+      twilioAuthToken: '',
     }))
   }
 
@@ -193,6 +224,45 @@ export default function PlatformSettingsPage() {
       smtpPass: form.smtpPass,
       emailFrom: form.emailFrom,
     })
+  }
+
+  const handleSms = (event: FormEvent) => {
+    event.preventDefault()
+    void save('sms', {
+      twilioAccountSid: form.twilioAccountSid,
+      twilioAuthToken: form.twilioAuthToken,
+      twilioFromNumber: form.twilioFromNumber,
+      twilioLogFallback: form.twilioLogFallback ? 'true' : 'false',
+      creditsPerSms: form.creditsPerSms || '0.25',
+      smsWelcomeEnabled: form.smsWelcomeEnabled ? 'true' : 'false',
+      smsRenewalEnabled: form.smsRenewalEnabled ? 'true' : 'false',
+      smsDigitalCardEnabled: form.smsDigitalCardEnabled ? 'true' : 'false',
+      smsWelcomeTemplate: form.smsWelcomeTemplate,
+      smsRenewalTemplate: form.smsRenewalTemplate,
+      smsDigitalCardTemplate: form.smsDigitalCardTemplate,
+    })
+  }
+
+  const sendTestSms = async () => {
+    setTestingSms(true)
+    setMessage(null)
+    try {
+      const res = await fetch('/api/settings/sms-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: testPhone }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to send test SMS')
+      setMessage({
+        type: 'ok',
+        text: data.logged ? `Test SMS logged for ${data.to} (Twilio not live).` : `Test SMS sent to ${data.to}.`,
+      })
+    } catch (error) {
+      setMessage({ type: 'error', text: error instanceof Error ? error.message : 'Failed to send test SMS' })
+    } finally {
+      setTestingSms(false)
+    }
   }
 
   if (loading) {
@@ -465,6 +535,144 @@ export default function PlatformSettingsPage() {
               <Button type="submit" loading={saving === 'email'}>Save email settings</Button>
             </div>
           </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">SMS notifications</h2>
+            <StatusBadge configured={form.smsConfigured} mockLabel="Logged only" />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSms} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Platform Twilio account for every venue. Each successful SMS uses {form.creditsPerSms || '0.25'} credits from that venue. Venues cannot set their own SMS number or credentials.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Twilio Account SID / API key"
+                value={form.twilioAccountSid}
+                onChange={(event) => setField('twilioAccountSid', event.target.value)}
+                placeholder="ACxxx or SKxxx"
+                autoComplete="off"
+              />
+              <Input
+                label="Twilio auth token"
+                type="password"
+                value={form.twilioAuthToken}
+                onChange={(event) => setField('twilioAuthToken', event.target.value)}
+                placeholder={form.twilioAuthTokenSet ? 'Leave blank to keep the current token' : 'Auth token'}
+                autoComplete="new-password"
+              />
+              <Input
+                label="From number"
+                value={form.twilioFromNumber}
+                onChange={(event) => setField('twilioFromNumber', event.target.value)}
+                placeholder="+447450458667"
+              />
+              <Input
+                label="Credits per SMS"
+                value={form.creditsPerSms}
+                onChange={(event) => setField('creditsPerSms', event.target.value)}
+                placeholder="0.25"
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={form.twilioLogFallback}
+                onChange={(event) => setField('twilioLogFallback', event.target.checked)}
+              />
+              Log SMS when Twilio is not configured (local/dev)
+            </label>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-700">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.smsWelcomeEnabled}
+                  onChange={(event) => setField('smsWelcomeEnabled', event.target.checked)}
+                />
+                Welcome SMS
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.smsRenewalEnabled}
+                  onChange={(event) => setField('smsRenewalEnabled', event.target.checked)}
+                />
+                Renewal reminder SMS
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={form.smsDigitalCardEnabled}
+                  onChange={(event) => setField('smsDigitalCardEnabled', event.target.checked)}
+                />
+                Digital card SMS
+              </label>
+            </div>
+            <div className="space-y-3">
+              <div>
+                <label htmlFor="sms-welcome-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Welcome template
+                </label>
+                <textarea
+                  id="sms-welcome-template"
+                  value={form.smsWelcomeTemplate}
+                  onChange={(event) => setField('smsWelcomeTemplate', event.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="sms-renewal-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Renewal template
+                </label>
+                <textarea
+                  id="sms-renewal-template"
+                  value={form.smsRenewalTemplate}
+                  onChange={(event) => setField('smsRenewalTemplate', event.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="sms-digital-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Digital card template
+                </label>
+                <textarea
+                  id="sms-digital-template"
+                  value={form.smsDigitalCardTemplate}
+                  onChange={(event) => setField('smsDigitalCardTemplate', event.target.value)}
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Digital card SMS is sent when a QR code is issued, not for physical cards. The card link is a short URL.
+                Merge fields: {'{{tenant_name}}'}, {'{{member_name}}'}, {'{{card_number}}'}, {'{{plan}}'}, {'{{expiry}}'}, {'{{days}}'}, {'{{renewal_url}}'}, {'{{card_url}}'}
+              </p>
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" loading={saving === 'sms'}>Save SMS settings</Button>
+            </div>
+          </form>
+          <div className="mt-6 pt-4 border-t border-gray-100 flex flex-wrap gap-3 items-end">
+            <div className="flex-1 min-w-[12rem]">
+              <Input
+                label="Send a test SMS"
+                value={testPhone}
+                onChange={(event) => setTestPhone(event.target.value)}
+                placeholder="07xxx or +447xxx"
+              />
+            </div>
+            <Button type="button" variant="secondary" loading={testingSms} onClick={() => void sendTestSms()}>
+              Send test
+            </Button>
+            <p className="text-xs text-gray-500 w-full">Test messages are not charged to the venue.</p>
+          </div>
         </CardContent>
       </Card>
     </div>

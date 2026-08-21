@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid'
 import { format } from 'date-fns'
 import { generateQRCodeBuffer, formatMembershipQRData } from './qrcode'
 import { AppSettings, getAppSettings } from './settings'
+import { tenantsCollection } from './db'
 
 const LOCAL_CERT_DIR = path.join(process.cwd(), 'certs', 'apple-wallet')
 const LOCAL_PASS_TYPE_ID = 'pass.com.ashlartechnologies.membership'
@@ -58,6 +59,7 @@ export interface GeneratedPass {
   qrCodeImage: string
   passData: WalletPassData
   passUrl?: string
+  images?: Record<string, Buffer>
 }
 
 function certDirectory(settings: AppSettings) {
@@ -98,6 +100,19 @@ function passIdentity(settings: AppSettings) {
   }
 }
 
+function tenantPassImages(logoPng?: string, iconPng?: string): Record<string, Buffer> {
+  if (!logoPng) return {}
+  const logo = Buffer.from(logoPng, 'base64')
+  const icon = iconPng ? Buffer.from(iconPng, 'base64') : logo
+  return {
+    'logo.png': logo,
+    'logo@2x.png': logo,
+    'icon.png': icon,
+    'icon@2x.png': icon,
+    'icon@3x.png': icon,
+  }
+}
+
 function passImages() {
   const files = ['icon.png', 'icon@2x.png', 'icon@3x.png', 'logo.png', 'logo@2x.png']
   const buffers: Record<string, Buffer> = {}
@@ -127,14 +142,17 @@ export async function generateWalletPass(options: {
   const authToken = options.authToken || uuid().replace(/-/g, '')
   const qrCodeData = await formatMembershipQRData(cardNumber, tenantId)
 
+  const tenant = tenantId ? await tenantsCollection.findById(tenantId) : null
+  const venueName = tenant?.name?.trim() || 'Membership Manager'
+
   const passData: WalletPassData = {
     passTypeId,
     serialNumber,
     authToken,
     teamIdentifier,
-    organizationName: 'Ashlar Technologies',
-    description: 'Membership Card',
-    logoText: 'Membership Manager',
+    organizationName: venueName,
+    description: `${venueName} membership`,
+    logoText: venueName,
     foregroundColor: 'rgb(255, 255, 255)',
     backgroundColor: 'rgb(25, 55, 95)',
     labelColor: 'rgb(200, 200, 200)',
@@ -198,6 +216,7 @@ export async function generateWalletPass(options: {
     qrCodeData,
     qrCodeImage,
     passData,
+    images: tenantPassImages(tenant?.logoPng, tenant?.iconPng),
   }
 }
 
@@ -207,7 +226,10 @@ export async function isWalletPassConfigured(): Promise<boolean> {
   return Boolean(passTypeId && teamIdentifier && loadWalletCertificates(settings))
 }
 
-export async function generatePkpassFile(passData: WalletPassData): Promise<Buffer | null> {
+export async function generatePkpassFile(
+  passData: WalletPassData,
+  extraImages?: Record<string, Buffer>
+): Promise<Buffer | null> {
   const settings = await getAppSettings()
   const certificates = loadWalletCertificates(settings)
   if (!certificates || !passData.passTypeId || !passData.teamIdentifier) {
@@ -215,7 +237,7 @@ export async function generatePkpassFile(passData: WalletPassData): Promise<Buff
     return null
   }
 
-  const images = passImages()
+  const images = { ...passImages(), ...extraImages }
   if (!images['icon.png']) {
     throw new Error('Apple Wallet icon.png is missing from src/lib/wallet-assets')
   }

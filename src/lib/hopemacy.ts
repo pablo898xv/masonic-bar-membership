@@ -76,6 +76,12 @@ export async function hopeMacyEnabled() {
   return Boolean(appId && appSecret)
 }
 
+export function mockPaymentsAllowed() {
+  if (process.env.ALLOW_MOCK_PAYMENTS === 'true') return true
+  if (process.env.ALLOW_MOCK_PAYMENTS === 'false') return false
+  return process.env.NODE_ENV !== 'production'
+}
+
 function basicAuth(user: string, pass: string) {
   return `Basic ${Buffer.from(`${user}:${pass}`).toString('base64')}`
 }
@@ -214,8 +220,16 @@ export async function initiateOpenBankingPayment(request: OpenBankingInitiation)
   const accountNumber = digits(request.creditor.accountNumber)
   if (!(await hopeMacyEnabled()) || sortCode.length !== 6 || accountNumber.length !== 8) {
     if (!(await hopeMacyEnabled())) {
-      console.warn('Hope Macy is not configured; using mock open banking checkout')
-      return mockPayment(request)
+      if (mockPaymentsAllowed()) {
+        console.warn('Hope Macy is not configured; using mock open banking checkout')
+        return mockPayment(request)
+      }
+      return {
+        success: false as const,
+        paymentId: '',
+        paymentUrl: '',
+        error: 'Open banking is not configured. A super admin must add Hope Macy credentials in Platform settings.',
+      }
     }
     return {
       success: false as const,

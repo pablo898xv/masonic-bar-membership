@@ -4,8 +4,10 @@ import {
   membersCollection,
   membershipNumbersCollection,
   subscriptionPlansCollection,
+  tenantsCollection,
 } from '@/lib/db'
 import { generateQRCodeDataURL, formatMembershipQRData } from '@/lib/qrcode'
+import { tenantLogoPath } from '@/lib/tenancy'
 import { isWalletPassConfigured } from '@/lib/wallet-pass'
 import { isGoogleWalletConfigured } from '@/lib/google-wallet'
 import { hasDigitalCard } from '@/lib/card-type'
@@ -23,10 +25,11 @@ export async function GET(
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
 
-    const [member, membershipNumber, subscriptionPlan] = await Promise.all([
+    const [member, membershipNumber, subscriptionPlan, tenant] = await Promise.all([
       membersCollection.findById(membership.memberId),
       membershipNumbersCollection.findById(membership.membershipNumberId),
       subscriptionPlansCollection.findById(membership.subscriptionPlanId),
+      tenantsCollection.findById(membership.tenantId),
     ])
 
     if (!member || !membershipNumber || !subscriptionPlan) {
@@ -47,6 +50,8 @@ export async function GET(
       status: membership.status,
       planName: subscriptionPlan.name,
       expiryDate: membership.expiryDate,
+      tenantName: tenant?.name || 'Membership Manager',
+      logoUrl: tenant ? tenantLogoPath(tenant, 'logo') : '',
       qrCodeImage,
       appleWalletAvailable:
         (await isWalletPassConfigured()) &&

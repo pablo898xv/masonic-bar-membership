@@ -4,6 +4,8 @@ import { format } from 'date-fns'
 import { getAppSettings } from '@/lib/settings'
 import { publicAppUrl } from '@/lib/card-link'
 import { formatMembershipQRData } from '@/lib/qrcode'
+import { tenantsCollection } from '@/lib/db'
+import { publicTenantLogoUrl } from '@/lib/branding'
 
 type ServiceAccount = {
   client_email: string
@@ -81,9 +83,11 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
 
   const genericClassId = classId(issuerId, settings.googleWalletClassSuffix.trim())
   const genericObjectId = objectId(issuerId, input.membershipId)
+  const tenant = input.tenantId ? await tenantsCollection.findById(input.tenantId) : null
+  const venueName = tenant?.name?.trim() || 'Membership Manager'
   const barcodeValue = await formatMembershipQRData(input.cardNumber, input.tenantId)
   const expiryLabel = input.expiryDate ? format(input.expiryDate, 'dd MMM yyyy') : '—'
-  const logoUrl = settings.googleWalletLogoUrl.trim()
+  const logoUrl = (tenant ? publicTenantLogoUrl(tenant) : '') || settings.googleWalletLogoUrl.trim()
 
   const genericClass = {
     id: genericClassId,
@@ -115,7 +119,7 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
     genericType: 'GENERIC_TYPE_UNSPECIFIED',
     hexBackgroundColor: '#19375f',
     cardTitle: {
-      defaultValue: { language: 'en-GB', value: 'Membership Manager' },
+      defaultValue: { language: 'en-GB', value: venueName },
     },
     header: {
       defaultValue: { language: 'en-GB', value: input.memberName },

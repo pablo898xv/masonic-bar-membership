@@ -8,6 +8,7 @@ import {
 import { initiateOpenBankingPayment } from '@/lib/hopemacy'
 import { reconcileByExternalId, reconcileMembershipPayment } from '@/lib/open-banking'
 import { belongsToTenant, publicTenantPath, requireTenant, creditorForTenant, assertCreditsAvailable, unchargedFormats } from '@/lib/tenancy'
+import { canAccessMembership, membershipNotFound } from '@/lib/membership-access'
 
 export async function POST(request: NextRequest) {
   try {
@@ -147,6 +148,9 @@ export async function GET(request: NextRequest) {
     const membership = await membershipsCollection.findById(membershipId)
     if (!membership) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    }
+    if (!canAccessMembership(request, membership)) {
+      return membershipNotFound()
     }
     if (!membership.paymentId) {
       return NextResponse.json({ error: 'No payment initiated for this membership' }, { status: 404 })

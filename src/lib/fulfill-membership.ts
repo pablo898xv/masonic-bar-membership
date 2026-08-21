@@ -5,21 +5,93 @@ import {
   membershipNumbersCollection,
   membersCollection,
   walletPassesCollection,
+  tenantsCollection,
 } from '@/lib/db'
 import { tillSystemFor } from '@/lib/till-system'
 import { formatMembershipQRData } from '@/lib/qrcode'
-import { membershipCardUrl } from '@/lib/card-link'
+import { ensureMembershipCardLink } from '@/lib/card-link'
 import { emailService } from '@/lib/email'
+import { sendMembershipSms } from '@/lib/sms'
 import { hasDigitalCard } from '@/lib/card-type'
 import { formatMagstripeData, getAppSettings } from '@/lib/settings'
 import { assertCreditsAvailable, consumeIssuanceCredit, unchargedFormats } from '@/lib/tenancy'
 import { v4 as uuidv4 } from 'uuid'
 
-async function ensureAccessToken(membershipId: string, current?: string) {
-  if (current) return current
-  const accessToken = uuidv4()
-  await membershipsCollection.update(membershipId, { accessToken })
-  return accessToken
+function smsSkipMessage(skipped?: string, fallback?: string) {
+  if (skipped === 'disabled') return 'Digital card SMS is turned off in platform settings'
+  if (skipped === 'invalid_phone' || skipped === 'no_phone') return 'This member has no valid mobile number'
+  if (skipped === 'not_configured') return 'Twilio is not configured'
+  if (skipped === 'no_credits') return fallback || 'Not enough credits to send SMS'
+  if (skipped === 'empty_body') return 'The digital card SMS template is empty'
+  return fallback || 'SMS was not sent'
+}
+
+export async function sendDigitalCardSms(membershipId: string) {
+  const membership = await membershipsCollection.findById(membershipId)
+  if (!membership) {
+    return { ok: false as const, status: 404, error: 'Membership not found' }
+  }
+  if (!hasDigitalCard(membership.cardType)) {
+    return { ok: false as const, status: 400, error: 'SMS is only sent for digital QR cards' }
+  }
+  if (membership.status === 'PENDING_PAYMENT' || membership.status === 'CANCELLED') {
+    return { ok: false as const, status: 400, error: 'This membership is not ready for a digital card SMS' }
+  }
+
+  const [member, membershipNumber] = await Promise.all([
+    membersCollection.findById(membership.memberId),
+    membershipNumbersCollection.findById(membership.membershipNumberId),
+  ])
+  if (!member) return { ok: false as const, status: 404, error: 'Member not found' }
+  if (!membershipNumber) return { ok: false as const, status: 404, error: 'Card number not found' }
+
+  const [tenant, link] = await Promise.all([
+    tenantsCollection.findById(membership.tenantId),
+    ensureMembershipCardLink(membership),
+  ])
+
+  try {
+    const result = await sendMembershipSms({
+      tenantId: membership.tenantId,
+      to: member.phone,
+      kind: 'digitalCard',
+      membershipId: membership.id,
+      fields: {
+        tenant_name: tenant?.name || 'Membership Manager',
+        member_name: member.name,
+        card_number: membershipNumber.cardNumber,
+        card_url: link.shortUrl,
+      },
+    })
+    if (!result.ok) {
+      return {
+        ok: false as const,
+        status: result.skipped === 'no_credits' ? 402 : 400,
+        error: smsSkipMessage(result.skipped, result.error),
+        skipped: result.skipped,
+      }
+    }
+    return {
+      ok: true as const,
+      to: result.to,
+      sid: result.sid,
+      charged: result.charged,
+      shortUrl: link.shortUrl,
+    }
+  } catch (error) {
+    return {
+      ok: false as const,
+      status: 502,
+      error: error instanceof Error ? error.message : 'Failed to send SMS',
+    }
+  }
+}
+
+async function notifyDigitalCardSms(membershipId: string) {
+  const result = await sendDigitalCardSms(membershipId)
+  if (!result.ok) {
+    console.error('SMS notification failed', result)
+  }
 }
 
 async function ensureWalletPass(membershipId: string, cardNumber: number) {
@@ -150,7 +222,8 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
     return { ok: false as const, status: 404, error: 'Card number not found' }
   }
 
-  const accessToken = await ensureAccessToken(membershipId, membership.accessToken)
+  const link = await ensureMembershipCardLink(membership)
+  const accessToken = link.accessToken
   const addingFormat = membership.cardType !== 'BOTH' && membership.cardType !== format
   if (addingFormat) {
     const charged = await consumeIssuanceCredit(
@@ -175,8 +248,9 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
           memberName: member.name,
           memberEmail: member.email,
           cardNumber: membershipNumber.cardNumber,
-          qrCodeUrl: membershipCardUrl(membershipId, accessToken),
+          qrCodeUrl: link.cardUrl,
         })
+        await notifyDigitalCardSms(membershipId)
       }
     }
     if (!membership.tillSystemEnabled && membership.status === 'ACTIVE' && membership.expiryDate) {
@@ -218,7 +292,8 @@ export async function fulfillPaidMembership(membershipId: string) {
     throw new Error('Subscription plan not found')
   }
 
-  const accessToken = await ensureAccessToken(membershipId, membership.accessToken)
+  const link = await ensureMembershipCardLink(membership)
+  const accessToken = link.accessToken
   const alreadyActive = membership.status === 'ACTIVE'
   const now = new Date()
   const expiryDate = membership.expiryDate || new Date(now.getTime())
@@ -284,7 +359,6 @@ export async function fulfillPaidMembership(membershipId: string) {
   }
 
   if (!alreadyActive && member && membershipNumber) {
-    const cardUrl = membershipCardUrl(membershipId, accessToken)
     await emailService.sendWelcomeEmail({
       memberName: member.name,
       memberEmail: member.email,
@@ -292,8 +366,11 @@ export async function fulfillPaidMembership(membershipId: string) {
       cardType: membership.cardType,
       subscriptionName: subscriptionPlan.name,
       expiryDate,
-      qrCodeUrl: hasDigitalCard(membership.cardType) ? cardUrl : undefined,
+      qrCodeUrl: hasDigitalCard(membership.cardType) ? link.cardUrl : undefined,
     })
+    if (hasDigitalCard(membership.cardType)) {
+      await notifyDigitalCardSms(membershipId)
+    }
   }
 
   return { accessToken }

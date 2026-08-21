@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import Link from 'next/link'
+import { PublicVenueHeader } from '@/components/brand/public-venue-header'
 
 interface SubscriptionPlan {
   id: string
@@ -138,12 +139,7 @@ export default function RegisterPage() {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4">
       <div className="max-w-lg mx-auto">
-        <div className="text-center mb-8">
-          <Link href="/" className="text-2xl font-bold text-gray-900">
-            Membership Manager
-          </Link>
-          <h1 className="text-xl text-gray-600 mt-2">Membership Registration</h1>
-        </div>
+        <PublicVenueHeader subtitle="Membership registration" />
 
         {/* Progress Steps */}
         <div className="flex items-center justify-center mb-8">

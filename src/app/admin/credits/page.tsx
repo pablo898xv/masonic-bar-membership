@@ -27,6 +27,10 @@ type Entry = {
   revocable?: boolean
 }
 
+function formatEntryAmount(amount: number) {
+  return Number.isInteger(amount) ? String(amount) : amount.toFixed(2)
+}
+
 export default function CreditsPage() {
   const [balance, setBalance] = useState(0)
   const [packages, setPackages] = useState<Pack[]>([])
@@ -129,7 +133,7 @@ export default function CreditsPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Credits</h1>
         <p className="text-gray-500 mt-1">
-          Issuing a QR code or a physical card uses 1 credit. Replacements and renewals of the same card number do not. When the balance is 0, new cards cannot be issued.
+          Issuing a QR code or a physical card uses 1 credit. Each SMS notification uses 0.25 credits. Replacements and renewals of the same card number do not. When the balance is 0, new cards cannot be issued and SMS is skipped.
         </p>
       </div>
 
@@ -139,7 +143,9 @@ export default function CreditsPage() {
       <Card>
         <CardContent className="pt-6">
           <p className="text-sm text-gray-500">Balance</p>
-          <p className="text-4xl font-bold text-gray-900 mt-1">{balance}</p>
+          <p className="text-4xl font-bold text-gray-900 mt-1">
+            {Number.isInteger(balance) ? balance : balance.toFixed(2)}
+          </p>
         </CardContent>
       </Card>
 
@@ -208,7 +214,7 @@ export default function CreditsPage() {
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <p className={entry.amount < 0 ? 'text-red-600' : 'text-green-700'}>
-                  {entry.amount > 0 ? `+${entry.amount}` : entry.amount}
+                  {entry.amount > 0 ? `+${formatEntryAmount(entry.amount)}` : formatEntryAmount(entry.amount)}
                 </p>
                 {canRevokePacks && entry.revocable && (
                   <Button

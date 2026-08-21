@@ -9,6 +9,7 @@ import {
 import { generateQRCodeBuffer, formatMembershipQRData } from '@/lib/qrcode'
 import { generatePkpassFile, generateWalletPass } from '@/lib/wallet-pass'
 import { getAppSettings } from '@/lib/settings'
+import { canAccessMembership, membershipNotFound } from '@/lib/membership-access'
 import { v4 as uuidv4 } from 'uuid'
 
 export const runtime = 'nodejs'
@@ -24,14 +25,11 @@ export async function GET(
     const token = searchParams.get('token')
     
     const membership = await membershipsCollection.findById(id)
-    
-    if (!membership) {
-      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
-    }
 
-    if (token && membership.accessToken !== token) {
-      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
+    if (!canAccessMembership(request, membership, token || '')) {
+      return membershipNotFound()
     }
+    if (!membership) return membershipNotFound()
     
     if (membership.status !== 'ACTIVE') {
       return NextResponse.json(
@@ -83,7 +81,7 @@ export async function GET(
         authToken: walletPass.authToken,
       })
 
-      const pkpass = await generatePkpassFile(generatedPass.passData)
+      const pkpass = await generatePkpassFile(generatedPass.passData, generatedPass.images)
       if (!pkpass) {
         return NextResponse.json(
           { error: 'Apple Wallet pass generation not configured' },
@@ -100,7 +98,9 @@ export async function GET(
     }
     
     if (format === 'preview') {
-      const pngUrl = `/api/memberships/${id}/wallet-pass?format=png${token ? `&token=${encodeURIComponent(token)}` : ''}`
+      const pngUrl = `/api/memberships/${id}/wallet-pass?format=png${
+        token ? `&token=${encodeURIComponent(token)}` : ''
+      }`
       const html = `<!DOCTYPE html>
 <html>
 <head>

@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { format } from 'date-fns'
+import { PublicVenueHeader } from '@/components/brand/public-venue-header'
 
 interface Membership {
   id: string
@@ -40,7 +41,7 @@ interface SubscriptionPlan {
 function RenewContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const membershipId = searchParams.get('id')
+  const membershipId = searchParams.get('id') || searchParams.get('membershipId')
   const token = searchParams.get('token')
 
   const [membership, setMembership] = useState<Membership | null>(null)
@@ -62,7 +63,7 @@ function RenewContent() {
 
       try {
         const [membershipRes, plansRes] = await Promise.all([
-          fetch(`/api/memberships/${membershipId}`),
+          fetch(`/api/memberships/${membershipId}${token ? `?token=${encodeURIComponent(token)}` : ''}`),
           fetch('/api/subscription-plans?active=true')
         ])
 
@@ -92,7 +93,7 @@ function RenewContent() {
     }
 
     fetchData()
-  }, [membershipId])
+  }, [membershipId, token])
 
   const handleRenew = async () => {
     if (!membership) return
@@ -106,7 +107,8 @@ function RenewContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subscriptionPlanId: selectedPlan,
-          paymentMethod
+          paymentMethod,
+          token: token || undefined,
         })
       })
 
@@ -180,12 +182,7 @@ function RenewContent() {
   return (
     <div className="min-h-screen bg-gray-50 py-12 px-4">
       <div className="max-w-lg mx-auto">
-        <div className="text-center mb-8">
-          <Link href="/" className="text-2xl font-bold text-gray-900">
-            Membership Manager
-          </Link>
-          <h1 className="text-xl text-gray-600 mt-2">Renew Your Membership</h1>
-        </div>
+        <PublicVenueHeader subtitle="Renew your membership" />
 
         <Card>
           <CardHeader>

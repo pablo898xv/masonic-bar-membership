@@ -8,6 +8,7 @@ export const SECRET_SETTING_KEYS = [
   'smtpPass',
   'passCertificatePassword',
   'googleWalletServiceAccountJson',
+  'twilioAuthToken',
 ] as const
 
 export type SecretSettingKey = (typeof SECRET_SETTING_KEYS)[number]
@@ -35,6 +36,17 @@ export type AppSettings = {
   googleWalletServiceAccountPath: string
   googleWalletServiceAccountJson: string
   googleWalletLogoUrl: string
+  twilioAccountSid: string
+  twilioAuthToken: string
+  twilioFromNumber: string
+  twilioLogFallback: string
+  creditsPerSms: string
+  smsWelcomeEnabled: string
+  smsRenewalEnabled: string
+  smsDigitalCardEnabled: string
+  smsWelcomeTemplate: string
+  smsRenewalTemplate: string
+  smsDigitalCardTemplate: string
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
@@ -60,6 +72,20 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   googleWalletServiceAccountPath: '',
   googleWalletServiceAccountJson: '',
   googleWalletLogoUrl: '',
+  twilioAccountSid: '',
+  twilioAuthToken: '',
+  twilioFromNumber: '',
+  twilioLogFallback: 'true',
+  creditsPerSms: '0.25',
+  smsWelcomeEnabled: 'true',
+  smsRenewalEnabled: 'true',
+  smsDigitalCardEnabled: 'true',
+  smsWelcomeTemplate:
+    'Hi {{member_name}}, your membership is active. Card {{card_number}}, {{plan}}, valid until {{expiry}}. {{card_url}}',
+  smsRenewalTemplate:
+    'Hi {{member_name}}, your membership (card {{card_number}}) expires in {{days}} days ({{expiry}}). Renew: {{renewal_url}}',
+  smsDigitalCardTemplate:
+    '{{tenant_name}} has issued you a digital membership card, click here to download to your smartphone. {{card_url}}',
 }
 
 const SETTING_KEYS = Object.keys(APP_SETTINGS_DEFAULTS) as (keyof AppSettings)[]
@@ -89,6 +115,11 @@ function envOverrides(): Partial<AppSettings> {
     googleWalletServiceAccountPath: process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_PATH,
     googleWalletServiceAccountJson: process.env.GOOGLE_WALLET_SERVICE_ACCOUNT_JSON,
     googleWalletLogoUrl: process.env.GOOGLE_WALLET_LOGO_URL,
+    twilioAccountSid: process.env.TWILIO_ACCOUNT_SID,
+    twilioAuthToken: process.env.TWILIO_AUTH_TOKEN,
+    twilioFromNumber: process.env.TWILIO_FROM_NUMBER,
+    twilioLogFallback: process.env.TWILIO_LOG_FALLBACK,
+    creditsPerSms: process.env.CREDITS_PER_SMS,
   }
 
   const result: Partial<AppSettings> = {}
@@ -130,6 +161,13 @@ export async function getAppSettings(): Promise<AppSettings> {
   for (const key of SETTING_KEYS) {
     if (env[key]) value[key] = env[key] as string
     if (key in stored && stored[key] !== undefined) value[key] = stored[key] as string
+  }
+
+  if (
+    value.smsDigitalCardTemplate ===
+    'Hi {{member_name}}, your digital membership card #{{card_number}} is ready: {{card_url}}'
+  ) {
+    value.smsDigitalCardTemplate = APP_SETTINGS_DEFAULTS.smsDigitalCardTemplate
   }
 
   cache = { value, at: Date.now() }
@@ -178,6 +216,8 @@ export function toPublicSettings(settings: AppSettings, platformAdmin = false) {
       settings.googleWalletIssuerId &&
         (settings.googleWalletServiceAccountJson || settings.googleWalletServiceAccountPath)
     ),
+    smsConfigured: Boolean(settings.twilioAccountSid && settings.twilioAuthToken && settings.twilioFromNumber),
+    smsCreditCost: settings.creditsPerSms || '0.25',
     canManagePlatformIntegrations: platformAdmin,
   }
 
@@ -207,6 +247,17 @@ export function toPublicSettings(settings: AppSettings, platformAdmin = false) {
     googleWalletServiceAccountPath: settings.googleWalletServiceAccountPath,
     googleWalletServiceAccountJsonSet: Boolean(settings.googleWalletServiceAccountJson),
     googleWalletLogoUrl: settings.googleWalletLogoUrl,
+    twilioAccountSid: settings.twilioAccountSid,
+    twilioAuthTokenSet: Boolean(settings.twilioAuthToken),
+    twilioFromNumber: settings.twilioFromNumber,
+    twilioLogFallback: settings.twilioLogFallback === 'true',
+    creditsPerSms: settings.creditsPerSms,
+    smsWelcomeEnabled: settings.smsWelcomeEnabled !== 'false',
+    smsRenewalEnabled: settings.smsRenewalEnabled !== 'false',
+    smsDigitalCardEnabled: settings.smsDigitalCardEnabled !== 'false',
+    smsWelcomeTemplate: settings.smsWelcomeTemplate,
+    smsRenewalTemplate: settings.smsRenewalTemplate,
+    smsDigitalCardTemplate: settings.smsDigitalCardTemplate,
   }
 }
 

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
+import { VenueLogoUpload } from '@/components/admin/venue-logo-upload'
 
 type Tenant = {
   id: string
@@ -30,6 +31,7 @@ type Tenant = {
   contactRole: string
   contactEmail: string
   contactPhone: string
+  logoUrl?: string
 }
 
 const emptyDetails = {
@@ -232,11 +234,20 @@ export default function TenantsPage() {
               {tenants.map((tenant) => (
                 <tr key={tenant.id} className="border-b border-gray-100">
                   <td className="py-3">
-                    <p className="font-medium text-gray-900">{tenant.name}</p>
-                    <p className="text-gray-500">{tenant.slug}</p>
-                    {summaryLine(tenant) && (
-                      <p className="text-gray-500 mt-1">{summaryLine(tenant)}</p>
-                    )}
+                    <div className="flex items-start gap-3">
+                      {tenant.logoUrl ? (
+                        <img src={tenant.logoUrl} alt="" className="h-12 w-auto max-w-[8rem] object-contain" />
+                      ) : (
+                        <div className="h-10 w-10 rounded border border-dashed border-gray-200" />
+                      )}
+                      <div>
+                        <p className="font-medium text-gray-900">{tenant.name}</p>
+                        <p className="text-gray-500">{tenant.slug}</p>
+                        {summaryLine(tenant) && (
+                          <p className="text-gray-500 mt-1">{summaryLine(tenant)}</p>
+                        )}
+                      </div>
+                    </div>
                   </td>
                   <td className="font-mono text-xs">/t/{tenant.slug}/membership/register</td>
                   <td>{tenant.creditBalance}</td>
@@ -283,6 +294,13 @@ export default function TenantsPage() {
               value={form.slug}
               onChange={(event) => setField('slug', event.target.value)}
             />
+            {editing && (
+              <VenueLogoUpload
+                tenantId={editing.id}
+                logoUrl={editing.logoUrl}
+                onUpdated={(logoUrl) => setEditing((current) => (current ? { ...current, logoUrl } : current))}
+              />
+            )}
           </section>
 
           <section className="space-y-3">

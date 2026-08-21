@@ -6,9 +6,12 @@ import {
   subscriptionPlansCollection 
 } from '@/lib/db'
 import { requireTenant } from '@/lib/tenancy'
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
   try {
+    const { error: authError } = await requireAdmin(request)
+    if (authError) return authError
     const { tenant, error } = await requireTenant(request)
     if (error || !tenant) return error!
 

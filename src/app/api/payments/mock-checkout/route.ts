@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { mockPaymentsAllowed } from '@/lib/hopemacy'
 import { membershipsCollection, membersCollection, subscriptionPlansCollection, tenantsCollection } from '@/lib/db'
 import { findPackage } from '@/lib/credits'
 
@@ -88,6 +89,9 @@ function checkoutPage(opts: {
 }
 
 export async function GET(request: NextRequest) {
+  if (!mockPaymentsAllowed()) {
+    return new NextResponse('Not found', { status: 404 })
+  }
   const { searchParams } = new URL(request.url)
   const membershipId = searchParams.get('membershipId')
   const paymentId = searchParams.get('paymentId')

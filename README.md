@@ -137,6 +137,23 @@ bash deploy/hyperv/bootstrap.sh
 
 The first bootstrap run installs Docker and asks you to log out/in. Run it again to build images and start the stack. From Windows, add the guest IP to `C:\Windows\System32\drivers\etc\hosts` for `ashlartechnologies.com`, `www.ashlartechnologies.com`, `membership.ashlartechnologies.com`, `portainer.ashlartechnologies.com`, `relay.ashlartechnologies.com`, and `traefik.ashlartechnologies.com`, then open those hostnames on ports 80/443. Public `membership.ashlartechnologies.com` uses Let's Encrypt (HTTP-01 on port 80); set `ACME_EMAIL` in `.env`. Set the Portainer admin password on first visit. VM default: 2 vCPU, 4 GB startup / 6 GB max, 40 GB dynamic disk, Default Switch NAT.
 
+## UAT (10.0.1.8)
+
+The live UAT guest is **`10.0.1.8`** (`ashtechukdc1h1`). Local `npm run dev` and that VM should run the same code. After changes:
+
+```bash
+npm run uat:sync
+# or: bash deploy/uat/sync.sh
+```
+
+That copies this tree (and Apple Wallet certs) over SSH, keeps UAT `.env` / `.env.local`, and rebuilds the web container. To also replace UAT Firestore/Auth with the local emulator export:
+
+```bash
+npm run uat:sync:data
+```
+
+UAT env files and private keys stay on the guest; they are not in git. SSH uses host `ashtechukdc1h1` (see `~/.ssh/config`).
+
 ## Deployment to Firebase
 
 ### 1. Initialize Firebase Hosting

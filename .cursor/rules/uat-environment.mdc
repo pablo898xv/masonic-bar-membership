@@ -1,0 +1,13 @@
+---
+description: Keep local Membership Manager and UAT (10.0.1.8) in sync
+alwaysApply: true
+---
+
+# UAT environment
+
+- **UAT** is the Hyper-V guest `ashtechukdc1h1` at **`10.0.1.8`** (user `ashtechadmin`, SSH host `ashtechukdc1h1`).
+- **Local** is this laptop (`npm run dev` + Docker emulators). UAT runs the Hosting-parity stack (`docker compose --profile hosting`).
+- After app, Docker, or deploy changes, push this tree to UAT with `bash deploy/uat/sync.sh` (or `npm run uat:sync`). Do not leave local and UAT on different code.
+- Preserve UAT `.env` and `.env.local`. Do not commit secrets, certs, or `.env.local`.
+- Copy Apple Wallet PEMs with the default sync. Push emulator data only when asked (`bash deploy/uat/sync.sh --data`); that replaces UAT Firestore/Auth.
+- `10.0.1.10` is the old guest address. Do not deploy there.

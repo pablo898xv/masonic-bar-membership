@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import { ReactNode, useEffect, useState } from 'react'
 import { Msrx6StatusBar } from '@/components/admin/msrx6-status-bar'
 import { TenantSwitcher } from '@/components/admin/tenant-switcher'
+import { VenueBrandMark } from '@/components/admin/venue-brand-mark'
 
 interface AdminLayoutProps {
   children: ReactNode
@@ -170,9 +171,8 @@ export function AdminLayout({ children }: AdminLayoutProps) {
         {/* Sidebar */}
         <div className="fixed inset-y-0 left-0 w-64 bg-slate-900">
           <div className="flex flex-col h-full">
-            <div className="flex flex-col justify-center h-16 px-6 bg-slate-800">
-              <h1 className="text-xl font-bold text-white leading-tight">Membership Manager</h1>
-              <p className="text-xs text-slate-400">Ashlar Technologies</p>
+            <div className="px-4 py-4 bg-slate-800">
+              <VenueBrandMark />
             </div>
             <div className="pt-4 border-b border-slate-800">
               <TenantSwitcher />

@@ -3,22 +3,45 @@ import { membershipsCollection } from '@/lib/db'
 import { deleteMembershipAndReleaseCard } from '@/lib/delete-membership'
 import { formatMagstripeData } from '@/lib/settings'
 import { belongsToTenant, requireTenant } from '@/lib/tenancy'
+import { requireAdmin } from '@/lib/auth'
+import { hasValidSession } from '@/lib/auth-token'
+import { canAccessMembership, membershipNotFound } from '@/lib/membership-access'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await params
+    const result = await membershipsCollection.findByIdWithRelations(id)
+    if (!result || !canAccessMembership(request, result.membership)) {
+      return membershipNotFound()
+    }
+
+    if (!hasValidSession(request)) {
+      return NextResponse.json({
+        id: result.membership.id,
+        cardType: result.membership.cardType,
+        status: result.membership.status,
+        expiryDate: result.membership.expiryDate,
+        member: result.member ? { name: result.member.name, email: result.member.email } : null,
+        membershipNumber: result.membershipNumber
+          ? { cardNumber: result.membershipNumber.cardNumber }
+          : null,
+        subscriptionPlan: result.subscriptionPlan
+          ? {
+              id: result.subscriptionPlan.id,
+              name: result.subscriptionPlan.name,
+              durationYears: result.subscriptionPlan.durationYears,
+              price: result.subscriptionPlan.price,
+            }
+          : null,
+      })
+    }
+
     const { tenant, error } = await requireTenant(request)
     if (error || !tenant) return error!
-
-    const { id } = await params
-    
-    const result = await membershipsCollection.findByIdWithRelations(id)
-    
-    if (!result || !belongsToTenant(result.membership, tenant.id)) {
-      return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
-    }
+    if (!belongsToTenant(result.membership, tenant.id)) return membershipNotFound()
 
     return NextResponse.json({
       ...result.membership,
@@ -42,6 +65,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { error: authError } = await requireAdmin(request)
+    if (authError) return authError
     const { tenant, error } = await requireTenant(request)
     if (error || !tenant) return error!
 
@@ -76,6 +101,8 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { error: authError } = await requireAdmin(_request)
+    if (authError) return authError
     const { tenant, error } = await requireTenant(_request)
     if (error || !tenant) return error!
 

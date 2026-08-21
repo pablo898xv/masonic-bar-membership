@@ -9,7 +9,7 @@ import {
   paymentTransactionsCollection,
 } from '@/lib/db'
 import { getAppSettings } from '@/lib/settings'
-import { findPackage, packIsRevocable } from '@/lib/credits'
+import { findPackage, packIsRevocable, parseSmsCreditCost, roundCredits } from '@/lib/credits'
 import { voidPaymentOrder } from '@/lib/hopemacy'
 
 export const TENANT_COOKIE = 'mbm_tenant'
@@ -143,9 +143,17 @@ export async function resolveTenant(request: NextRequest): Promise<Tenant | null
   return all[0] || null
 }
 
+function cookieSecure() {
+  return (
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NEXT_PUBLIC_BASE_URL || '').startsWith('https://')
+  )
+}
+
 export function tenantCookie(response: NextResponse, tenant: Tenant) {
-  response.cookies.set(TENANT_COOKIE, tenant.id, { path: '/', sameSite: 'lax' })
-  response.cookies.set(TENANT_SLUG_COOKIE, tenant.slug, { path: '/', sameSite: 'lax' })
+  const secure = cookieSecure()
+  response.cookies.set(TENANT_COOKIE, tenant.id, { path: '/', sameSite: 'lax', httpOnly: true, secure })
+  response.cookies.set(TENANT_SLUG_COOKIE, tenant.slug, { path: '/', sameSite: 'lax', httpOnly: true, secure })
   return response
 }
 
@@ -171,7 +179,7 @@ export async function assertCreditsAvailable(tenantId: string, needed: number) {
   const tenant = await tenantsCollection.findById(tenantId)
   if (!tenant) return { ok: false as const, status: 404, error: 'Tenant not found' }
   if (needed <= 0) return { ok: true as const }
-  if (tenant.creditBalance < needed) {
+  if (tenant.creditBalance + 1e-9 < needed) {
     return {
       ok: false as const,
       status: 402,
@@ -246,7 +254,7 @@ export async function consumeIssuanceCredit(
   const tenant = await tenantsCollection.findById(tenantId)
   if (!tenant) return { ok: false as const, status: 404, error: 'Tenant not found' }
 
-  await tenantsCollection.update(tenantId, { creditBalance: tenant.creditBalance - 1 })
+  await tenantsCollection.update(tenantId, { creditBalance: roundCredits(tenant.creditBalance - 1) })
   await creditLedgerCollection.create({
     tenantId,
     type: 'ISSUE',
@@ -276,16 +284,51 @@ export async function addCredits(
 ) {
   const tenant = await tenantsCollection.findById(tenantId)
   if (!tenant) return { ok: false as const, error: 'Tenant not found' }
-  await tenantsCollection.update(tenantId, { creditBalance: tenant.creditBalance + amount })
+  const next = roundCredits(tenant.creditBalance + amount)
+  await tenantsCollection.update(tenantId, { creditBalance: next })
   await creditLedgerCollection.create({
     tenantId,
     type,
-    amount,
+    amount: roundCredits(amount),
     note,
     createdByUserId,
     ...extra,
   })
-  return { ok: true as const, creditBalance: tenant.creditBalance + amount }
+  return { ok: true as const, creditBalance: next }
+}
+
+export async function consumeSmsCredit(
+  tenantId: string,
+  note: string,
+  createdByUserId?: string,
+  membershipId?: string
+) {
+  const settings = await getAppSettings()
+  const cost = parseSmsCreditCost(settings.creditsPerSms)
+  if (cost <= 0) return { ok: true as const, charged: 0 }
+
+  const available = await assertCreditsAvailable(tenantId, cost)
+  if (!available.ok) {
+    return {
+      ...available,
+      error: `Not enough credits to send SMS. Each SMS uses ${cost} credits.`,
+    }
+  }
+
+  const tenant = await tenantsCollection.findById(tenantId)
+  if (!tenant) return { ok: false as const, status: 404, error: 'Tenant not found' }
+
+  const next = roundCredits(tenant.creditBalance - cost)
+  await tenantsCollection.update(tenantId, { creditBalance: next })
+  await creditLedgerCollection.create({
+    tenantId,
+    type: 'SMS',
+    amount: -cost,
+    membershipId,
+    createdByUserId,
+    note,
+  })
+  return { ok: true as const, charged: cost, creditBalance: next }
 }
 
 export async function fulfillCreditPurchase(transaction: {
@@ -438,6 +481,20 @@ const VENUE_DETAIL_KEYS = [
   'contactPhone',
 ] as const
 
+export function tenantHasLogo(tenant: { logoPng?: string } | null | undefined) {
+  return Boolean(tenant?.logoPng)
+}
+
+export function tenantLogoPath(
+  tenant: { id: string; logoPng?: string; iconPng?: string; logoUpdatedAt?: Date },
+  kind: 'logo' | 'icon' = 'logo'
+) {
+  const bytes = kind === 'icon' ? tenant.iconPng || tenant.logoPng : tenant.logoPng
+  if (!bytes) return ''
+  const version = tenant.logoUpdatedAt ? new Date(tenant.logoUpdatedAt).getTime() : 0
+  return `/api/branding/${encodeURIComponent(tenant.id)}/${kind}${version ? `?v=${version}` : ''}`
+}
+
 export function serializeVenue(tenant: Tenant) {
   return {
     id: tenant.id,
@@ -446,6 +503,9 @@ export function serializeVenue(tenant: Tenant) {
     status: tenant.status,
     creditBalance: tenant.creditBalance,
     paymentMode: tenant.paymentMode,
+    hasLogo: tenantHasLogo(tenant),
+    logoUrl: tenantLogoPath(tenant, 'logo'),
+    iconUrl: tenantLogoPath(tenant, 'icon'),
     bankAccountSet: Boolean(tenant.bankSortCode && tenant.bankAccountNumber),
     addressLine1: tenant.addressLine1 || '',
     addressLine2: tenant.addressLine2 || '',

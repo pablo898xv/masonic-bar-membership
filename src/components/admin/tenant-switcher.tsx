@@ -9,6 +9,10 @@ type TenantOption = {
   creditBalance: number
 }
 
+function formatBalance(amount: number) {
+  return Number.isInteger(amount) ? String(amount) : amount.toFixed(2)
+}
+
 export function TenantSwitcher() {
   const [tenants, setTenants] = useState<TenantOption[]>([])
   const [currentId, setCurrentId] = useState('')
@@ -56,7 +60,10 @@ export function TenantSwitcher() {
         ))}
       </select>
       <p className="text-xs text-slate-400">
-        Credits: <span className="font-semibold text-white">{credits ?? current?.creditBalance ?? 0}</span>
+        Credits:{' '}
+        <span className="font-semibold text-white">
+          {formatBalance(credits ?? current?.creditBalance ?? 0)}
+        </span>
       </p>
     </div>
   )

@@ -28,8 +28,16 @@ function isPublicApi(request: NextRequest) {
     return true
   }
 
+  if (method === 'GET' && pathname === '/api/branding') return true
+  if (method === 'GET' && /^\/api\/branding\/[^/]+\/(logo|icon)$/.test(pathname)) return true
+
   if (method === 'GET' && /^\/api\/memberships\/[^/]+\/(card|wallet-pass|google-wallet)$/.test(pathname)) {
     return true
+  }
+
+  if (method === 'GET' && /^\/api\/memberships\/[^/]+$/.test(pathname)) {
+    const segment = pathname.slice('/api/memberships/'.length)
+    if (segment !== 'lookup' && segment !== 'expiring') return true
   }
 
   if (method === 'POST' && /^\/api\/memberships\/[^/]+\/renew$/.test(pathname)) {
@@ -56,7 +64,11 @@ function tenantRewrite(request: NextRequest) {
 
   const response = NextResponse.rewrite(url)
   response.headers.set('x-tenant-slug', slug)
-  response.cookies.set('mbm_tenant_slug', slug, { path: '/', sameSite: 'lax' })
+  response.cookies.set('mbm_tenant_slug', slug, {
+    path: '/',
+    sameSite: 'lax',
+    secure: request.nextUrl.protocol === 'https:',
+  })
   return response
 }
 

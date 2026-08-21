@@ -75,6 +75,8 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   const [encodeLoading, setEncodeLoading] = useState(false)
   const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
   const [formatLoading, setFormatLoading] = useState(false)
+  const [smsLoading, setSmsLoading] = useState(false)
+  const [smsNotice, setSmsNotice] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const writer = useMsrx6()
 
@@ -180,6 +182,30 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
       setError(err instanceof Error ? err.message : 'Failed to issue digital card')
     } finally {
       setFormatLoading(false)
+    }
+  }
+
+  const handleSendCardSms = async () => {
+    if (!membership || !hasDigitalCard(membership.cardType)) return
+    setSmsLoading(true)
+    setSmsNotice(null)
+    setError('')
+    try {
+      const res = await fetch(`/api/memberships/${membership.id}/notify-sms`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to send SMS')
+      setSmsNotice({
+        type: 'ok',
+        text: data.to ? `Card SMS sent to ${data.to}` : 'Card SMS sent',
+      })
+      await fetchMembership()
+    } catch (err) {
+      setSmsNotice({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to send SMS',
+      })
+    } finally {
+      setSmsLoading(false)
     }
   }
 
@@ -408,6 +434,16 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
             </p>
           )}
 
+          {smsNotice && (
+            <p className={`text-sm rounded-lg p-3 ${
+              smsNotice.type === 'ok'
+                ? 'bg-green-50 text-green-800 border border-green-200'
+                : 'bg-red-50 text-red-800 border border-red-200'
+            }`}>
+              {smsNotice.text}
+            </p>
+          )}
+
           <div className="flex flex-wrap gap-2">
             {canEncode && magstripeData && (
               <Button
@@ -444,6 +480,16 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
               <Link href={membership.digitalCardPath} target="_blank">
                 <Button size="sm" variant="secondary">Open digital card</Button>
               </Link>
+            )}
+            {hasDigitalCard(membership.cardType) && canIssueCards && (
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={handleSendCardSms}
+                loading={smsLoading}
+              >
+                Send card SMS
+              </Button>
             )}
             {(hasPhysicalCard(membership.cardType) || membership.cardIssuance) && (
               <Link href="/admin/card-queue">

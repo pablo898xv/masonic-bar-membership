@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PublicVenueHeader } from '@/components/brand/public-venue-header'
 import { cardTypeLabel } from '@/lib/card-type'
 
 interface FoundCard {
@@ -48,12 +49,7 @@ export default function LookupPage() {
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-12">
       <div className="mx-auto max-w-lg">
-        <div className="mb-8 text-center">
-          <Link href="/" className="text-2xl font-bold text-gray-900">
-            Membership Manager
-          </Link>
-          <h1 className="mt-2 text-xl text-gray-600">Look up your membership</h1>
-        </div>
+        <PublicVenueHeader subtitle="Look up your membership" />
 
         <Card>
           <CardHeader>

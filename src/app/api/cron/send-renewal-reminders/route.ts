@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { membershipsCollection, membersCollection, membershipNumbersCollection, subscriptionPlansCollection, systemConfigCollection } from '@/lib/db'
 import { requireCronOrAdmin } from '@/lib/auth'
 import { emailService } from '@/lib/email'
+import { sendMembershipSms } from '@/lib/sms'
 import { requireTenant } from '@/lib/tenancy'
 
 export async function POST(request: NextRequest) {
@@ -49,7 +50,10 @@ export async function POST(request: NextRequest) {
         }
 
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
-        const renewalLink = `${baseUrl}/membership/renew?membershipId=${membership.id}`
+        const token = encodeURIComponent(membership.accessToken || '')
+        const renewalLink = `${baseUrl}/membership/renew?id=${encodeURIComponent(membership.id)}${
+          token ? `&token=${token}` : ''
+        }`
 
         const { success: sent } = await emailService.sendRenewalReminder({
           memberName: member.name,
@@ -59,6 +63,29 @@ export async function POST(request: NextRequest) {
           subscriptionName: subscriptionPlan.name,
           renewalUrl: renewalLink,
         })
+
+        try {
+          await sendMembershipSms({
+            tenantId: membership.tenantId,
+            to: member.phone,
+            kind: 'renewal',
+            membershipId: membership.id,
+            fields: {
+              member_name: member.name,
+              card_number: membershipNumber.cardNumber,
+              plan: subscriptionPlan.name,
+              expiry: membership.expiryDate!.toLocaleDateString('en-GB', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              }),
+              days: Math.ceil((membership.expiryDate!.getTime() - Date.now()) / (1000 * 60 * 60 * 24)),
+              renewal_url: renewalLink,
+            },
+          })
+        } catch (error) {
+          console.error('Renewal SMS failed', error)
+        }
 
         if (sent) {
           await systemConfigCollection.set(reminderKey, new Date().toISOString())

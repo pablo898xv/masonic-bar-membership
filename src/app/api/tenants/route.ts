@@ -6,6 +6,7 @@ import {
   serializeVenue,
   slugify,
   tenantCookie,
+  tenantLogoPath,
   userTenants,
   venueDetailsFromBody,
 } from '@/lib/tenancy'
@@ -19,7 +20,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         tenants: tenants
           .filter((tenant) => tenant.status === 'ACTIVE')
-          .map((tenant) => ({ name: tenant.name, slug: tenant.slug })),
+          .map((tenant) => ({
+            name: tenant.name,
+            slug: tenant.slug,
+            logoUrl: tenantLogoPath(tenant, 'logo'),
+          })),
       })
     }
 

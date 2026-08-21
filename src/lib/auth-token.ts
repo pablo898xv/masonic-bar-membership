@@ -43,22 +43,29 @@ export function hasValidSession(request: NextRequest) {
 }
 
 export function authCookie(response: NextResponse, token: string) {
+  const https =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NEXT_PUBLIC_BASE_URL || '').startsWith('https://')
   response.cookies.set(AUTH_COOKIE, token, {
     path: '/',
     sameSite: 'lax',
     httpOnly: true,
     maxAge: AUTH_MAX_AGE,
-    secure: process.env.NODE_ENV === 'production',
+    secure: https,
   })
   return response
 }
 
 export function clearAuthCookie(response: NextResponse) {
+  const https =
+    process.env.NODE_ENV === 'production' ||
+    (process.env.NEXT_PUBLIC_BASE_URL || '').startsWith('https://')
   response.cookies.set(AUTH_COOKIE, '', {
     path: '/',
     maxAge: 0,
     httpOnly: true,
     sameSite: 'lax',
+    secure: https,
   })
   return response
 }

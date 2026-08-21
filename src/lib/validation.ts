@@ -70,6 +70,17 @@ export const appSettingsUpdateSchema = z.object({
   googleWalletServiceAccountPath: z.string().optional(),
   googleWalletServiceAccountJson: z.string().optional(),
   googleWalletLogoUrl: z.string().optional(),
+  twilioAccountSid: z.string().optional(),
+  twilioAuthToken: z.string().optional(),
+  twilioFromNumber: z.string().optional(),
+  twilioLogFallback: z.enum(['true', 'false']).optional(),
+  creditsPerSms: z.string().optional(),
+  smsWelcomeEnabled: z.enum(['true', 'false']).optional(),
+  smsRenewalEnabled: z.enum(['true', 'false']).optional(),
+  smsDigitalCardEnabled: z.enum(['true', 'false']).optional(),
+  smsWelcomeTemplate: z.string().optional(),
+  smsRenewalTemplate: z.string().optional(),
+  smsDigitalCardTemplate: z.string().optional(),
 })
 
 export type MemberInput = z.infer<typeof memberSchema>

@@ -10,6 +10,7 @@ function PaymentCompleteContent() {
   const searchParams = useSearchParams()
   const membershipId = searchParams.get('membershipId')
   const status = searchParams.get('status')
+  const token = searchParams.get('token') || ''
   
   const [membership, setMembership] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -20,7 +21,9 @@ function PaymentCompleteContent() {
       if (!membershipId) return
       
       try {
-        const res = await fetch(`/api/memberships/${membershipId}`)
+        const res = await fetch(
+          `/api/memberships/${membershipId}${token ? `?token=${encodeURIComponent(token)}` : ''}`
+        )
         const payload = await res.json()
         const data = payload.membership
           ? { ...payload.membership, membershipNumber: payload.membershipNumber, subscriptionPlan: payload.subscriptionPlan }
@@ -28,7 +31,11 @@ function PaymentCompleteContent() {
         setMembership(data)
         
         if (data.status === 'ACTIVE' && (data.cardType === 'QR_CODE' || data.cardType === 'BOTH' || data.digitalCardPath)) {
-          setQrCode(`/api/memberships/${membershipId}/wallet-pass?format=qrcode`)
+          setQrCode(
+            `/api/memberships/${membershipId}/wallet-pass?format=qrcode${
+              token ? `&token=${encodeURIComponent(token)}` : ''
+            }`
+          )
         }
       } catch (error) {
         console.error('Error fetching membership:', error)
@@ -38,7 +45,7 @@ function PaymentCompleteContent() {
     }
 
     fetchData()
-  }, [membershipId])
+  }, [membershipId, token])
 
   if (loading) {
     return (

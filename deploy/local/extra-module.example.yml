@@ -23,6 +23,8 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.routers.payments.rule=Host(`payments.ashlartechnologies.com`)
-      - traefik.http.routers.payments.entrypoints=web,websecure
-      - traefik.http.routers.payments.middlewares=admin-acl
+      - traefik.http.routers.payments.entrypoints=websecure
+      - traefik.http.routers.payments.tls=true
+      - traefik.http.routers.payments.tls.certresolver=letsencrypt
+      - traefik.http.routers.payments.middlewares=admin-acl,secure-headers
       - traefik.http.services.payments.loadbalancer.server.port=3000

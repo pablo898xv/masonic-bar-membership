@@ -15,7 +15,8 @@
 # Hyper-V guests bind Traefik on 0.0.0.0 so the Windows host can reach :80/:443:
 #   PUBLISH_HOST=0.0.0.0 docker compose --profile hosting up -d --build
 #
-# Public interfaces are only 80 and 443 (Traefik). App / Portainer / Mailpit
+# Public interfaces are only 80 and 443 (Traefik). HTTP on :80 is Let's Encrypt
+# HTTP-01 plus a permanent redirect to HTTPS. App / Portainer / Mailpit
 # ports stay on the Docker network. Host-header routing mimics Firebase
 # Hosting custom domains. Point DNS or a hosts file at the VM:
 #   ashlartechnologies.com / www / membership  →  web
@@ -36,10 +37,18 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=masonic_private
+      - --providers.file.filename=/etc/traefik/tls.yml
       - --entrypoints.web.address=:80
+      # HTTP is only for Let's Encrypt HTTP-01. Traefik skips this redirect for
+      # /.well-known/acme-challenge/. Everything else goes to HTTPS.
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.web.http.redirections.entrypoint.permanent=true
       - --entrypoints.websecure.address=:443
       - --entrypoints.websecure.http.tls=true
       - --api.dashboard=true
+      - --api.insecure=false
+      - --log.level=WARN
       - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-webmaster@ashlartechnologies.com}
       - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
       - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
@@ -50,13 +59,31 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_letsencrypt:/letsencrypt
+      - ./deploy/local/traefik-tls.yml:/etc/traefik/tls.yml:ro
     labels:
       - traefik.enable=true
-      - traefik.http.routers.dashboard.rule=Host(`traefik.${HOST_DOMAIN:-ashlartechnologies.com}`)
-      - traefik.http.routers.dashboard.entrypoints=web,websecure
-      - traefik.http.routers.dashboard.middlewares=admin-acl
-      - traefik.http.routers.dashboard.service=api@internal
       - traefik.http.middlewares.admin-acl.ipallowlist.sourcerange=${ADMIN_ACL:-10.0.1.0/24,92.207.102.100/30,62.223.215.229/32}
+      - traefik.http.middlewares.login-ratelimit.ratelimit.average=8
+      - traefik.http.middlewares.login-ratelimit.ratelimit.period=1m
+      - traefik.http.middlewares.login-ratelimit.ratelimit.burst=12
+      - traefik.http.middlewares.public-ratelimit.ratelimit.average=40
+      - traefik.http.middlewares.public-ratelimit.ratelimit.period=1m
+      - traefik.http.middlewares.public-ratelimit.ratelimit.burst=60
+      - traefik.http.middlewares.secure-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.secure-headers.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.secure-headers.headers.forceSTSHeader=true
+      - traefik.http.middlewares.secure-headers.headers.browserXssFilter=true
+      - traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.secure-headers.headers.frameDeny=true
+      - traefik.http.middlewares.secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin
+      - traefik.http.middlewares.secure-headers.headers.permissionsPolicy=camera=(), microphone=(), geolocation=()
+      - traefik.http.middlewares.secure-headers.headers.customResponseHeaders.X-Powered-By=
+      - traefik.http.middlewares.secure-headers.headers.customResponseHeaders.Server=
+      - traefik.http.routers.dashboard.rule=Host(`traefik.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.tls=true
+      - traefik.http.routers.dashboard.middlewares=admin-acl,secure-headers
+      - traefik.http.routers.dashboard.service=api@internal
     networks:
       - masonic_private
 
@@ -104,10 +131,12 @@ services:
       - "127.0.0.1:1125:1025"
     labels:
       - traefik.enable=true
-      - traefik.http.routers.relay.rule=Host(`relay.${HOST_DOMAIN:-ashlartechnologies.com}`)
-      - traefik.http.routers.relay.entrypoints=web,websecure
-      - traefik.http.routers.relay.middlewares=admin-acl
       - traefik.http.services.relay.loadbalancer.server.port=8025
+      - traefik.http.routers.relay.rule=Host(`relay.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.relay.entrypoints=websecure
+      - traefik.http.routers.relay.tls=true
+      - traefik.http.routers.relay.tls.certresolver=letsencrypt
+      - traefik.http.routers.relay.middlewares=admin-acl,secure-headers
     networks:
       - masonic_private
 
@@ -157,20 +186,31 @@ services:
     labels:
       - traefik.enable=true
       - traefik.http.services.membership.loadbalancer.server.port=3000
-      # Public hostname: Let's Encrypt on 443, HTTP-01 on 80, then redirect.
+      # Public hostname: HTTPS only. Port 80 is the entrypoint redirect + ACME.
       - traefik.http.routers.membership.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`)
       - traefik.http.routers.membership.entrypoints=websecure
       - traefik.http.routers.membership.tls=true
       - traefik.http.routers.membership.tls.certresolver=letsencrypt
-      - traefik.http.middlewares.membership-https.redirectscheme.scheme=https
-      - traefik.http.middlewares.membership-https.redirectscheme.permanent=true
-      - traefik.http.routers.membership-http.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`)
-      - traefik.http.routers.membership-http.entrypoints=web
-      - traefik.http.routers.membership-http.middlewares=membership-https
+      - traefik.http.routers.membership.middlewares=secure-headers
+      - traefik.http.routers.membership-login.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`) && Path(`/api/auth/login`)
+      - traefik.http.routers.membership-login.entrypoints=websecure
+      - traefik.http.routers.membership-login.tls=true
+      - traefik.http.routers.membership-login.tls.certresolver=letsencrypt
+      - traefik.http.routers.membership-login.middlewares=login-ratelimit,secure-headers
+      - traefik.http.routers.membership-login.service=membership
+      - traefik.http.routers.membership-login.priority=100
+      - traefik.http.routers.membership-public.rule=Host(`membership.${HOST_DOMAIN:-ashlartechnologies.com}`) && (Path(`/api/auth/register`) || Path(`/api/memberships/lookup`) || Path(`/api/payments/webhook`) || Path(`/api/payments/initiate`) || Path(`/api/members`) || Path(`/api/memberships`))
+      - traefik.http.routers.membership-public.entrypoints=websecure
+      - traefik.http.routers.membership-public.tls=true
+      - traefik.http.routers.membership-public.tls.certresolver=letsencrypt
+      - traefik.http.routers.membership-public.middlewares=public-ratelimit,secure-headers
+      - traefik.http.routers.membership-public.service=membership
+      - traefik.http.routers.membership-public.priority=80
       # LAN / hosts-file names (apex and www DNS are not this VM).
       - traefik.http.routers.membership-lan.rule=Host(`${HOST_DOMAIN:-ashlartechnologies.com}`) || Host(`www.${HOST_DOMAIN:-ashlartechnologies.com}`)
-      - traefik.http.routers.membership-lan.entrypoints=web,websecure
-      - traefik.http.routers.membership-lan.middlewares=admin-acl
+      - traefik.http.routers.membership-lan.entrypoints=websecure
+      - traefik.http.routers.membership-lan.tls=true
+      - traefik.http.routers.membership-lan.middlewares=admin-acl,secure-headers
       - traefik.http.routers.membership-lan.service=membership
     networks:
       - masonic_private
@@ -187,10 +227,12 @@ services:
       - portainer_data:/data
     labels:
       - traefik.enable=true
-      - traefik.http.routers.portainer.rule=Host(`portainer.${HOST_DOMAIN:-ashlartechnologies.com}`)
-      - traefik.http.routers.portainer.entrypoints=web,websecure
-      - traefik.http.routers.portainer.middlewares=admin-acl
       - traefik.http.services.portainer.loadbalancer.server.port=9000
+      - traefik.http.routers.portainer.rule=Host(`portainer.${HOST_DOMAIN:-ashlartechnologies.com}`)
+      - traefik.http.routers.portainer.entrypoints=websecure
+      - traefik.http.routers.portainer.tls=true
+      - traefik.http.routers.portainer.tls.certresolver=letsencrypt
+      - traefik.http.routers.portainer.middlewares=admin-acl,secure-headers
     networks:
       - masonic_private
 

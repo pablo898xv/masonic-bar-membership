@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
-type Venue = { name: string; slug: string }
+type Venue = { name: string; slug: string; logoUrl?: string }
 
 export function VenueSignupLinks() {
   const [venues, setVenues] = useState<Venue[]>([])
@@ -46,10 +46,15 @@ export function VenueSignupLinks() {
           <Link
             key={venue.slug}
             href={`/t/${venue.slug}/membership/register`}
-            className="rounded-xl border border-slate-700 bg-slate-800/60 px-5 py-4 text-white hover:border-blue-500 transition-colors"
+            className="rounded-xl border border-slate-700 bg-slate-800/60 px-5 py-4 text-white hover:border-blue-500 transition-colors text-left flex items-center gap-3"
           >
+            {venue.logoUrl ? (
+              <img src={venue.logoUrl} alt="" className="h-12 w-auto max-w-[8rem] object-contain shrink-0" />
+            ) : null}
+            <div>
             <p className="font-semibold">{venue.name}</p>
             <p className="text-sm text-slate-400 mt-1">Join or look up a card</p>
+            </div>
           </Link>
         ))}
       </div>
