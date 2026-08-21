@@ -94,7 +94,7 @@ export default function UsersPage() {
         <CardContent className="pt-6 space-y-3">
           {users.length === 0 && <p className="text-sm text-gray-500">No users linked to this venue yet.</p>}
           {users.map((user) => (
-            <div key={user.id} className="flex justify-between p-3 bg-gray-50 rounded-lg">
+            <div key={user.id} className="flex flex-col gap-2 sm:flex-row sm:justify-between p-3 bg-gray-50 rounded-lg">
               <div>
                 <p className="font-medium text-gray-900">{user.name}</p>
                 <p className="text-sm text-gray-500">{user.email}</p>

@@ -16,11 +16,26 @@ export const subscriptionPlanSchema = z.object({
   isActive: z.boolean().default(true),
 })
 
+export const partnerIssueSchema = z.object({
+  member: memberSchema,
+  subscriptionPlanId: z.string().min(1, 'Subscription plan ID is required'),
+  cardNumber: z.number().int().positive().optional(),
+  createCardNumber: z.boolean().optional(),
+  cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD']).default('QR_CODE'),
+  notifications: z
+    .object({
+      email: z.boolean().optional(),
+      sms: z.boolean().optional(),
+    })
+    .optional(),
+  returnCardUrl: z.boolean().optional(),
+})
+
 export const membershipPurchaseSchema = z.object({
   memberId: z.string().min(1, 'Member ID is required'),
   subscriptionPlanId: z.string().min(1, 'Subscription plan ID is required'),
   cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD']),
-  paymentMethod: z.enum(['CARD', 'OPEN_BANKING', 'COMPLIMENTARY']),
+  paymentMethod: z.enum(['CARD', 'OPEN_BANKING', 'CASH', 'IN_PERSON', 'COMPLIMENTARY']),
   adminIssued: z.boolean().optional(),
 })
 
@@ -40,6 +55,17 @@ export const adminLoginSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
 })
 
+export const adminTotpVerifySchema = z.object({
+  ticket: z.string().min(1),
+  code: z.string().min(6, 'Enter the 6-digit code or a backup code'),
+})
+
+export const adminChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+  code: z.string().optional(),
+})
+
 export const adminCreateSchema = z.object({
   email: z.string().email('Invalid email address'),
   password: z.string().min(8, 'Password must be at least 8 characters'),
@@ -52,6 +78,9 @@ export const appSettingsUpdateSchema = z.object({
   hopeMacyAppId: z.string().optional(),
   hopeMacyAppSecret: z.string().optional(),
   hopeMacyMaxAmount: z.string().optional(),
+  stripePublishableKey: z.string().optional(),
+  stripeSecretKey: z.string().optional(),
+  stripeWebhookSecret: z.string().optional(),
   bankAccountName: z.string().optional(),
   bankSortCode: z.string().optional(),
   bankAccountNumber: z.string().optional(),

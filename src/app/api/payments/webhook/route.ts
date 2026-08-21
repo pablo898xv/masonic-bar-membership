@@ -5,7 +5,14 @@ import { reconcileByExternalId } from '@/lib/open-banking'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}))
-    const paymentId = typeof body.paymentId === 'string' ? body.paymentId : typeof body.poId === 'string' ? body.poId : ''
+    const paymentId =
+      typeof body.paymentId === 'string'
+        ? body.paymentId
+        : typeof body.poId === 'string'
+          ? body.poId
+          : typeof body.po === 'string'
+            ? body.po
+            : ''
 
     if (!paymentId) {
       return NextResponse.json({ error: 'paymentId is required' }, { status: 400 })

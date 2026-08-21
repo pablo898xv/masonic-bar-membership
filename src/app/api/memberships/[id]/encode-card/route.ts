@@ -3,6 +3,7 @@ import { membershipsCollection, membershipNumbersCollection } from '@/lib/db'
 import { formatMagstripeData } from '@/lib/settings'
 import { recordEncodedCard } from '@/lib/fulfill-membership'
 import { belongsToTenant, issuanceAlreadyCharged, assertCreditsAvailable, requireTenant } from '@/lib/tenancy'
+import { isPaidMembershipStatus } from '@/lib/payment-methods'
 
 export async function GET(
   request: NextRequest,
@@ -23,6 +24,12 @@ export async function GET(
     }
     const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, tenant.id)
     const addingPhysical = membership.cardType === 'QR_CODE'
+    if (!isPaidMembershipStatus(membership.status)) {
+      return NextResponse.json(
+        { error: 'Complete payment before encoding a card' },
+        { status: 400 }
+      )
+    }
     if (addingPhysical) {
       const alreadyCharged = await issuanceAlreadyCharged(
         tenant.id,

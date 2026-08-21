@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { membersCollection, membershipsCollection, membershipNumbersCollection, subscriptionPlansCollection, cardIssuancesCollection } from '@/lib/db'
 import { memberUpdateSchema } from '@/lib/validation'
 import { belongsToTenant, requireTenant } from '@/lib/tenancy'
+import { normalizeMemberEmail } from '@/lib/member-pii'
 
 export async function GET(
   request: NextRequest,
@@ -63,7 +64,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
     
-    if (validation.data.email && validation.data.email !== existingMember.email) {
+    if (validation.data.email && normalizeMemberEmail(validation.data.email) !== normalizeMemberEmail(existingMember.email)) {
       const emailExists = await membersCollection.findByEmail(validation.data.email, tenant.id)
       if (emailExists) {
         return NextResponse.json(

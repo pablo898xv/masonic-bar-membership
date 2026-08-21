@@ -7,7 +7,7 @@ import {
   cardIssuancesCollection,
 } from '@/lib/db'
 import { cardNumberFromQuery, stripSentinels } from '@/lib/msrx6/protocol'
-import { formatMagstripeData, getMagstripePrefix } from '@/lib/settings'
+import { formatMagstripeData, getMagstripePrefix, getMagstripeTracks } from '@/lib/settings'
 import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
@@ -21,6 +21,7 @@ export async function GET(request: NextRequest) {
     }
 
     const magstripePrefix = await getMagstripePrefix(tenant.id)
+    const magstripeTracks = await getMagstripeTracks(tenant.id)
     const cardNumber = cardNumberFromQuery(q, magstripePrefix)
     if (cardNumber == null) {
       return NextResponse.json({ error: 'Could not read a card number from that input' }, { status: 400 })
@@ -34,6 +35,7 @@ export async function GET(request: NextRequest) {
         cardNumber,
         magstripeData,
         magstripePrefix,
+        magstripeTracks,
       })
     }
 
@@ -81,6 +83,7 @@ export async function GET(request: NextRequest) {
       cardNumber,
       magstripeData,
       magstripePrefix,
+      magstripeTracks,
       isAssigned: number.isAssigned,
       assignedAt: number.assignedAt,
       queried: stripSentinels(q),

@@ -1,6 +1,6 @@
 'use client'
 
-import { FormEvent, useEffect, useState } from 'react'
+import { FormEvent, useEffect, useRef, useState } from 'react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,6 +43,15 @@ export default function CreditsPage() {
   const [revoking, setRevoking] = useState<string | null>(null)
   const [canAdjust, setCanAdjust] = useState(false)
   const [canRevokePacks, setCanRevokePacks] = useState(false)
+  const [payments, setPayments] = useState({ card: false, openBanking: true })
+  const pollRef = useRef<number | null>(null)
+
+  const stopWatching = () => {
+    if (pollRef.current != null) {
+      window.clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
 
   const load = async () => {
     const res = await fetch('/api/credits')
@@ -52,6 +61,10 @@ export default function CreditsPage() {
     setLedger(data.ledger || [])
     setCanAdjust(Boolean(data.canAdjust))
     setCanRevokePacks(Boolean(data.canRevokePacks))
+    setPayments({
+      card: Boolean(data.payments?.card),
+      openBanking: data.payments?.openBanking !== false,
+    })
   }
 
   useEffect(() => {
@@ -67,26 +80,65 @@ export default function CreditsPage() {
         }).then(() => load())
       }
     }
-    if (params.get('cancelled') === '1') setMessage('Open banking payment was cancelled.')
+    if (params.get('cancelled') === '1') setMessage('Payment was cancelled.')
     void load()
+    return () => stopWatching()
   }, [])
 
-  const buy = async (packageKey: string) => {
+  const watchPayment = (paymentId: string) => {
+    stopWatching()
+    const started = Date.now()
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/payments/initiate?paymentId=${encodeURIComponent(paymentId)}`)
+        const data = await res.json().catch(() => ({}))
+        const status = typeof data.status === 'string' ? data.status.toLowerCase() : ''
+        if (status === 'completed') {
+          stopWatching()
+          setNotice('Credit pack purchased. Credits have been added to this venue.')
+          await load()
+          return
+        }
+        if (status === 'failed') {
+          stopWatching()
+          setMessage('Payment failed or was cancelled.')
+          return
+        }
+      } catch {
+        /* keep polling */
+      }
+      if (Date.now() - started > 15 * 60 * 1000) stopWatching()
+    }
+    void tick()
+    pollRef.current = window.setInterval(() => void tick(), 3000)
+  }
+
+  const buy = async (packageKey: string, method: 'CARD' | 'OPEN_BANKING') => {
     setMessage('')
     setNotice('')
-    setBuying(packageKey)
+    setBuying(`${packageKey}:${method}`)
+    const checkout = window.open('', 'mbm-credit-checkout')
     try {
       const res = await fetch('/api/credits/purchase', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ packageKey }),
+        body: JSON.stringify({ packageKey, method }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to start purchase')
       if (!data.paymentUrl) throw new Error('No payment URL returned')
       if (data.paymentId) window.sessionStorage.setItem('mbmCreditPaymentId', data.paymentId)
+      if (checkout && !checkout.closed) {
+        checkout.location.href = data.paymentUrl
+        checkout.focus()
+        setNotice('Complete payment in the new window. This page will update when it goes through.')
+        if (data.paymentId) watchPayment(data.paymentId)
+        setBuying(null)
+        return
+      }
       window.location.href = data.paymentUrl
     } catch (error) {
+      checkout?.close()
       setMessage(error instanceof Error ? error.message : 'Failed to start purchase')
       setBuying(null)
     }
@@ -166,14 +218,34 @@ export default function CreditsPage() {
                 <p className="text-xs text-emerald-700 min-h-[1.25rem] mt-1">
                   {pack.savingPercent ? `Save ${pack.savingPercent}% vs Starter` : 'Base rate'}
                 </p>
-                <Button
-                  className="mt-4 w-full"
-                  onClick={() => void buy(pack.key)}
-                  loading={buying === pack.key}
-                  disabled={Boolean(buying)}
-                >
-                  Buy with open banking
-                </Button>
+                <div className="mt-4 space-y-2">
+                  {payments.card && (
+                    <Button
+                      className="w-full"
+                      onClick={() => void buy(pack.key, 'CARD')}
+                      loading={buying === `${pack.key}:CARD`}
+                      disabled={Boolean(buying)}
+                    >
+                      Buy with card
+                    </Button>
+                  )}
+                  {payments.openBanking && (
+                    <Button
+                      className="w-full"
+                      variant={payments.card ? 'secondary' : 'primary'}
+                      onClick={() => void buy(pack.key, 'OPEN_BANKING')}
+                      loading={buying === `${pack.key}:OPEN_BANKING`}
+                      disabled={Boolean(buying)}
+                    >
+                      Buy with open banking
+                    </Button>
+                  )}
+                  {!payments.card && !payments.openBanking && (
+                    <p className="text-xs text-amber-700">
+                      Payments are not configured. A super admin must add card or open banking in Platform settings.
+                    </p>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -202,7 +274,7 @@ export default function CreditsPage() {
         <CardContent className="space-y-2">
           {ledger.length === 0 && <p className="text-sm text-gray-500">No credit movements yet.</p>}
           {ledger.map((entry) => (
-            <div key={entry.id} className="flex justify-between gap-3 text-sm border-b border-gray-100 py-2">
+            <div key={entry.id} className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:gap-3 text-sm border-b border-gray-100 py-2">
               <div>
                 <p className="font-medium text-gray-900">
                   {entry.type}

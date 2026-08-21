@@ -1,7 +1,9 @@
 import bcrypt from 'bcryptjs'
 import { NextRequest, NextResponse } from 'next/server'
-import { adminUsersCollection } from './db'
+import { publicAdminUser } from './admin-user'
+import { adminUsersCollection, type AdminUser } from './db'
 import {
+  generateToken,
   tokenFromRequest,
   verifyToken,
 } from './auth-token'
@@ -35,9 +37,33 @@ export async function getAuthenticatedUser(request: NextRequest) {
 
   const user = await adminUsersCollection.findById(payload.userId)
   if (!user || !user.isActive) return null
+  if (payload.purpose === '2fa') return null
+  if (user.passwordUpdatedAt && payload.pwdv !== user.passwordUpdatedAt.getTime()) return null
 
-  const { passwordHash: _, ...userWithoutPassword } = user
-  return userWithoutPassword
+  return publicAdminUser(user)
+}
+
+export function sessionTokenFor(user: AdminUser) {
+  return generateToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+    purpose: 'session',
+    pwdv: user.passwordUpdatedAt?.getTime(),
+  })
+}
+
+export function twoFactorTicketFor(user: AdminUser) {
+  return generateToken(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      purpose: '2fa',
+      pwdv: user.passwordUpdatedAt?.getTime(),
+    },
+    '5m'
+  )
 }
 
 export function isSuperAdmin(user: { isPlatformAdmin?: boolean } | null | undefined) {

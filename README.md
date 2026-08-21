@@ -8,7 +8,7 @@ An Ashlar Technologies membership discount card platform, built with Next.js 16 
 - **Digital Membership Cards**: QR code-based ewallet tickets (Apple Wallet compatible)
 - **Physical Card Support**: Magstripe card encoding with prefix configuration
 - **Subscription Management**: Multiple subscription plans with annual duration support
-- **Payment Integration**: Hope Macy open banking (PIS) for memberships and credit packs
+- **Payment Integration**: Open banking and card checkout for memberships and credit packs
 - **Card Issuance Queue**: Bar manager interface for processing physical cards
 - **Till System Integration**: API integration for enabling/disabling cards at the point of sale
 - **Renewal Reminders**: Automated email notifications for expiring memberships
@@ -255,10 +255,10 @@ gcloud scheduler jobs create http membership-renewal-reminders \
 - `POST /api/card-issuance/[id]/issue` - Mark card as issued
 
 ### Payments
-- `POST /api/payments/initiate` - Start a Hope Macy open banking payment
-- `GET /api/payments/initiate` - Poll Hope Macy and apply a completed payment
-- `GET /api/payments/return` - Return URL after Hope Macy (poll + redirect)
-- `POST /api/payments/webhook` - Optional reconcile trigger (Hope Macy does not send webhooks)
+- `POST /api/payments/initiate` - Start an open banking payment
+- `GET /api/payments/initiate` - Poll open banking and apply a completed payment
+- `GET /api/payments/return` - Return URL after open banking (poll + redirect)
+- `POST /api/payments/webhook` - Optional reconcile trigger (open banking does not send webhooks)
 - `GET /api/payments/mock-checkout` - Mock payment page (dev)
 - `POST /api/payments/mock-complete` - Complete mock payment (dev)
 
@@ -289,11 +289,11 @@ Configure the prefix per venue in Venue settings (default `;9998`).
 
 ## Integration Notes
 
-### Hope Macy
+### Open banking
 - Configure platform `HOPEMACY_APP_ID` and `HOPEMACY_APP_SECRET` (optional `HOPEMACY_BASE_URL`, default `https://pis.hopemacy.com/api/v1`)
 - Credit pack purchases pay into the platform account: `BANK_ACCOUNT_NAME`, `BANK_SORT_CODE`, `BANK_ACCOUNT_NUMBER`
 - Membership payouts use each venue’s own sort code and account number (Venue settings)
-- Open banking only (no card acquiring). Hope Macy has no outbound webhooks — status is polled on return
+- Open banking only (no card acquiring). There are no outbound webhooks — status is polled on return
 - Locally, empty App ID falls back to mock checkout
 
 ### Till System

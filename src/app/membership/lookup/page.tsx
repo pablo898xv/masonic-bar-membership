@@ -15,6 +15,7 @@ interface FoundCard {
   cardType: string
   status: string
   url: string | null
+  renewUrl?: string | null
 }
 
 export default function LookupPage() {
@@ -47,7 +48,7 @@ export default function LookupPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 px-4 py-12">
+    <div className="min-h-full bg-gray-50 px-4 py-12">
       <div className="mx-auto max-w-lg">
         <PublicVenueHeader subtitle="Look up your membership" />
 
@@ -107,6 +108,10 @@ export default function LookupPage() {
                       <Link href={card.url} className="text-sm font-medium text-blue-600 hover:underline">
                         Open card
                       </Link>
+                    ) : card.renewUrl ? (
+                      <Link href={card.renewUrl} className="text-sm font-medium text-blue-600 hover:underline">
+                        Renew
+                      </Link>
                     ) : (
                       <span className="text-sm text-gray-400">Unavailable</span>
                     )}
@@ -118,10 +123,7 @@ export default function LookupPage() {
         )}
 
         <p className="mt-6 text-center text-sm text-gray-500">
-          Not a member yet?{' '}
-          <Link href="/membership/register" className="text-blue-600 hover:underline">
-            Buy a membership
-          </Link>
+          Not a member yet? Speak to the bar manager for a current signup link.
         </p>
       </div>
     </div>

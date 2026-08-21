@@ -128,6 +128,20 @@ if [ ! -f "$DEST/.env.local" ] && [ -f "$DEST/.env.local.example" ]; then
   cp "$DEST/.env.local.example" "$DEST/.env.local"
 fi
 
+# Public links (QR, email, payments) must use the live domain.
+# 0.0.0.0 is the container bind address and must never appear in member-facing URLs.
+ensure_public_base_url() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  if grep -q '^NEXT_PUBLIC_BASE_URL=' "$file"; then
+    sed -i 's|^NEXT_PUBLIC_BASE_URL=.*|NEXT_PUBLIC_BASE_URL=https://membership.ashlartechnologies.com|' "$file"
+  else
+    printf '\nNEXT_PUBLIC_BASE_URL=https://membership.ashlartechnologies.com\n' >> "$file"
+  fi
+}
+ensure_public_base_url "$DEST/.env"
+ensure_public_base_url "$DEST/.env.local"
+
 if [ "$SYNC_CERTS" = 1 ]; then
   mkdir -p "$DEST/certs"
   tar xzf /tmp/mbm-certs.tgz -C "$DEST/certs"
@@ -138,6 +152,15 @@ fi
 
 printf 'synced_at=%s\ncommit=%s%s\n' "$STAMP" "$REV" "$DIRTY" > "$DEST/.uat-sync-revision"
 
+# Snapshot live emulator data before any compose work. App deploys must not
+# recreate Firebase — a rebuild of that image previously imported the last
+# on-disk export and dropped venues/logos/bank fields that only existed in memory.
+if docker exec masonic-firebase true >/dev/null 2>&1; then
+  echo "==> Exporting UAT Firestore/Auth"
+  docker exec masonic-firebase sh -c 'mkdir -p /firebase/data/snapshot && firebase emulators:export /firebase/data/snapshot --force --project "${FIREBASE_PROJECT_ID:-demo-masonic-bar}"' \
+    || echo "Warning: could not export emulator data; leaving the existing volume snapshot as-is." >&2
+fi
+
 if [ "$SYNC_DATA" = 1 ]; then
   echo "==> Replacing UAT emulator data"
   cd "$DEST"
@@ -146,7 +169,7 @@ if [ "$SYNC_DATA" = 1 ]; then
     -v masonic-bar-membership_firebase_data:/data \
     -v /tmp:/backup \
     masonic-bar-membership-firebase \
-    -c 'rm -rf /data/* /data/.[!.]*; tar xzf /backup/mbm-fbexport.tgz -C /data'
+    -c 'rm -rf /data/* /data/.[!.]*; mkdir -p /data/snapshot; tar xzf /backup/mbm-fbexport.tgz -C /data/snapshot'
   rm -f /tmp/mbm-fbexport.tgz
   docker compose --profile hosting up -d firebase
 fi
@@ -154,7 +177,8 @@ fi
 if [ "$BUILD" = 1 ]; then
   echo "==> Rebuilding UAT web image and applying Traefik edge config"
   cd "$DEST"
-  docker compose --profile hosting up -d --build web
+  docker compose --profile hosting build web
+  docker compose --profile hosting up -d --no-deps web
   docker compose --profile hosting up -d traefik mailpit portainer
 else
   echo "==> Skipping container rebuild"

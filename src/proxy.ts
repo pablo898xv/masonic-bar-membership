@@ -1,14 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { hasValidSession } from '@/lib/auth-token'
+import { absolutePublicUrl } from '@/lib/public-url'
 
 const PUBLIC_EXACT: Record<string, ReadonlySet<string>> = {
   '/api/auth/login': new Set(['POST']),
+  '/api/auth/login/totp': new Set(['POST']),
   '/api/auth/register': new Set(['POST']),
   '/api/auth/logout': new Set(['POST']),
   '/api/auth/setup': new Set(['GET']),
   '/api/auth/me': new Set(['GET']),
   '/api/subscription-plans': new Set(['GET']),
   '/api/members': new Set(['POST']),
+  '/api/members/availability': new Set(['POST']),
   '/api/memberships': new Set(['POST']),
   '/api/memberships/lookup': new Set(['POST']),
   '/api/payments/initiate': new Set(['GET', 'POST']),
@@ -22,9 +25,15 @@ function isPublicApi(request: NextRequest) {
   const { pathname } = request.nextUrl
   const method = request.method.toUpperCase()
 
+  if (pathname.startsWith('/api/v1/')) return true
+
   if (PUBLIC_EXACT[pathname]?.has(method)) return true
 
   if (pathname === '/api/tenants' && method === 'GET' && request.nextUrl.searchParams.get('public') === '1') {
+    return true
+  }
+
+  if (method === 'POST' && /^\/api\/payments\/stripe\/webhook(?:\/[^/]+)?$/.test(pathname)) {
     return true
   }
 
@@ -84,7 +93,7 @@ export function proxy(request: NextRequest) {
 
   if (pathname === '/admin' || pathname.startsWith('/admin/')) {
     if (hasValidSession(request)) return NextResponse.next()
-    const login = new URL('/admin/login', request.url)
+    const login = new URL(absolutePublicUrl(request, '/admin/login'))
     login.searchParams.set('next', `${pathname}${search}`)
     return NextResponse.redirect(login)
   }

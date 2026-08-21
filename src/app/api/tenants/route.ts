@@ -6,9 +6,9 @@ import {
   serializeVenue,
   slugify,
   tenantCookie,
-  tenantLogoPath,
   userTenants,
   venueDetailsFromBody,
+  isReservedUrlStub,
 } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
@@ -16,16 +16,7 @@ export async function GET(request: NextRequest) {
     await ensureDefaultTenant()
     const isPublic = request.nextUrl.searchParams.get('public') === '1'
     if (isPublic) {
-      const tenants = await tenantsCollection.findMany()
-      return NextResponse.json({
-        tenants: tenants
-          .filter((tenant) => tenant.status === 'ACTIVE')
-          .map((tenant) => ({
-            name: tenant.name,
-            slug: tenant.slug,
-            logoUrl: tenantLogoPath(tenant, 'logo'),
-          })),
-      })
+      return NextResponse.json({ tenants: [] })
     }
 
     const { user, error } = await requireAdmin(request)
@@ -55,13 +46,20 @@ export async function POST(request: NextRequest) {
     }
 
     let slug = slugify(typeof body.slug === 'string' ? body.slug : name)
-    const existing = await tenantsCollection.findBySlug(slug)
-    if (existing) slug = `${slug}-${Date.now().toString(36)}`
+    if (isReservedUrlStub(slug) || (await tenantsCollection.findBySlug(slug)) || (await tenantsCollection.findByUrlStub(slug))) {
+      slug = `${slug}-${Date.now().toString(36)}`
+    }
+
+    let urlStub = typeof body.urlStub === 'string' ? slugify(body.urlStub) : ''
+    if (urlStub && (isReservedUrlStub(urlStub) || urlStub === slug || (await tenantsCollection.findBySlug(urlStub)) || (await tenantsCollection.findByUrlStub(urlStub)))) {
+      urlStub = ''
+    }
 
     const credits = Number(body.creditBalance)
     const tenant = await tenantsCollection.create({
       name,
       slug,
+      ...(urlStub ? { urlStub } : {}),
       status: 'ACTIVE',
       creditBalance: Number.isFinite(credits) ? Math.max(0, Math.floor(credits)) : 0,
       paymentMode: 'OWN',

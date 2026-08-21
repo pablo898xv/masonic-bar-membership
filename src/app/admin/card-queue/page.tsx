@@ -1,10 +1,12 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
+import { BatchEncodeModal } from '@/components/admin/batch-encode-modal'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
 import { isMsrx6Cancelled } from '@/lib/msrx6/device'
 
@@ -51,6 +53,7 @@ interface QueueData {
     format: string
     example: string
     note: string
+    tracks?: number[]
   }
 }
 
@@ -62,6 +65,8 @@ export default function CardQueuePage() {
   const [showInstructions, setShowInstructions] = useState(false)
   const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchCards, setBatchCards] = useState<CardIssuance[]>([])
   const writer = useMsrx6()
   const outOfCredits = creditBalance !== null && creditBalance < 1
   const needsCredit = (issuance: CardIssuance) => issuance.membership.cardType === 'QR_CODE'
@@ -73,8 +78,8 @@ export default function CardQueuePage() {
     setActionLoading(false)
   }
 
-  const fetchQueue = async () => {
-    setLoading(true)
+  const fetchQueue = async (silent = false) => {
+    if (!silent) setLoading(true)
     try {
       const [res, tenantRes] = await Promise.all([
         fetch('/api/card-issuance/queue?includeCompleted=false'),
@@ -91,7 +96,7 @@ export default function CardQueuePage() {
       console.error('Error fetching queue:', error)
       setQueueData(null)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }
 
@@ -110,7 +115,7 @@ export default function CardQueuePage() {
       const data = await res.json().catch(() => ({}))
       throw new Error(data.error || 'Failed to mark as encoded')
     }
-    await fetchQueue()
+    await fetchQueue(true)
     setSelectedCard(null)
     setEncodeMessage(null)
   }
@@ -180,7 +185,7 @@ export default function CardQueuePage() {
         console.warn('Failed to enable card in till system')
       }
       
-      await fetchQueue()
+      await fetchQueue(true)
       setSelectedCard(null)
     } catch (error) {
       console.error('Error issuing card:', error)
@@ -198,18 +203,35 @@ export default function CardQueuePage() {
     )
   }
 
+  const readyCards = [...(queueData?.queue?.readyToEncode || [])].sort(
+    (a, b) => a.membership.membershipNumber.cardNumber - b.membership.membershipNumber.cardNumber
+  )
+
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Card Issuance Queue</h1>
           <p className="text-gray-500 mt-1">Process physical membership cards</p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => setShowInstructions(true)}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
+          <Button variant="secondary" onClick={() => setShowInstructions(true)} className="w-full sm:w-auto">
             Encoding Instructions
           </Button>
-          <Button onClick={fetchQueue}>
+          {readyCards.length > 0 && (
+            <Button
+              variant="secondary"
+              className="w-full sm:w-auto"
+              onClick={() => {
+                setSelectedCard(null)
+                setBatchCards(readyCards)
+                setBatchOpen(true)
+              }}
+            >
+              Batch encode ({readyCards.length})
+            </Button>
+          )}
+          <Button onClick={() => void fetchQueue()} className="w-full sm:w-auto">
             <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
@@ -226,45 +248,57 @@ export default function CardQueuePage() {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-yellow-600">{queueData?.summary?.readyToEncode || 0}</p>
-              <p className="text-sm text-gray-500">Ready to Encode</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-blue-600">{queueData?.summary?.encoded || 0}</p>
-              <p className="text-sm text-gray-500">Ready to Issue</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-gray-600">{queueData?.summary?.pending || 0}</p>
-              <p className="text-sm text-gray-500">Pending Payment</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-4">
-            <div className="text-center">
-              <p className="text-2xl font-bold text-red-600">{queueData?.summary?.actionRequired || 0}</p>
-              <p className="text-sm text-gray-500">Action Required</p>
-            </div>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-stretch">
+        <a href="#encode" className="block h-full min-h-[7.5rem]">
+          <Card className="h-full hover:border-yellow-300 transition-colors">
+            <CardContent className="pt-4 h-full">
+              <div className="text-center h-full flex flex-col justify-center">
+                <p className="text-2xl font-bold text-yellow-600">{queueData?.summary?.readyToEncode || 0}</p>
+                <p className="text-sm text-gray-500">Ready to Encode</p>
+                <p className="text-xs text-gray-400 mt-1 invisible">Encode + issue</p>
+              </div>
+            </CardContent>
+          </Card>
+        </a>
+        <a href="#issue" className="block h-full min-h-[7.5rem]">
+          <Card className="h-full hover:border-blue-300 transition-colors">
+            <CardContent className="pt-4 h-full">
+              <div className="text-center h-full flex flex-col justify-center">
+                <p className="text-2xl font-bold text-blue-600">{queueData?.summary?.encoded || 0}</p>
+                <p className="text-sm text-gray-500">Ready to Issue</p>
+                <p className="text-xs text-gray-400 mt-1 invisible">Encode + issue</p>
+              </div>
+            </CardContent>
+          </Card>
+        </a>
+        <a href="#payment" className="block h-full min-h-[7.5rem]">
+          <Card className="h-full hover:border-gray-400 transition-colors">
+            <CardContent className="pt-4 h-full">
+              <div className="text-center h-full flex flex-col justify-center">
+                <p className="text-2xl font-bold text-gray-600">{queueData?.summary?.pending || 0}</p>
+                <p className="text-sm text-gray-500">Pending Payment</p>
+                <p className="text-xs text-gray-400 mt-1 invisible">Encode + issue</p>
+              </div>
+            </CardContent>
+          </Card>
+        </a>
+        <div className="h-full min-h-[7.5rem]">
+          <Card className="h-full">
+            <CardContent className="pt-4 h-full">
+              <div className="text-center h-full flex flex-col justify-center">
+                <p className="text-2xl font-bold text-red-600">{queueData?.summary?.actionRequired || 0}</p>
+                <p className="text-sm text-gray-500">Action Required</p>
+                <p className="text-xs text-gray-400 mt-1">Encode + issue</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
 
       {/* Ready to Encode */}
-      <Card>
+      <Card id="encode" className="scroll-mt-24">
         <CardHeader>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Badge variant="warning">Ready to Encode</Badge>
             <span className="text-sm text-gray-500">
               Cards waiting to be written with card writer
@@ -272,23 +306,24 @@ export default function CardQueuePage() {
           </div>
         </CardHeader>
         <CardContent>
-          {!queueData?.queue?.readyToEncode?.length ? (
+          {!readyCards.length ? (
             <p className="text-gray-500 text-center py-4">No cards waiting to be encoded</p>
           ) : (
             <div className="space-y-3">
-              {queueData.queue.readyToEncode.map((issuance) => (
-                <div key={issuance.id} className="flex items-center justify-between p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <div>
+              {readyCards.map((issuance) => (
+                <div key={issuance.id} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <div className="min-w-0">
                     <p className="font-medium text-gray-900">{issuance.membership.member.name}</p>
                     <p className="text-sm text-gray-600">
                       Card #{issuance.membership.membershipNumber.cardNumber} • {issuance.membership.subscriptionPlan.name}
                     </p>
-                    <p className="text-sm font-mono text-yellow-800 mt-1">
+                    <p className="text-sm font-mono text-yellow-800 mt-1 break-all">
                       Encode: <span className="font-bold">{issuance.magstripeData}</span>
                     </p>
                   </div>
                   <Button
                     size="sm"
+                    className="w-full sm:w-auto shrink-0"
                     disabled={needsCredit(issuance) && outOfCredits}
                     onClick={() => {
                       if (needsCredit(issuance) && outOfCredits) return
@@ -309,9 +344,9 @@ export default function CardQueuePage() {
       </Card>
 
       {/* Encoded - Ready to Issue */}
-      <Card>
+      <Card id="issue" className="scroll-mt-24">
         <CardHeader>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Badge variant="info">Encoded - Ready to Issue</Badge>
             <span className="text-sm text-gray-500">
               Cards ready to be handed to members
@@ -324,8 +359,8 @@ export default function CardQueuePage() {
           ) : (
             <div className="space-y-3">
               {queueData.queue.encoded.map((issuance) => (
-                <div key={issuance.id} className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
-                  <div>
+                <div key={issuance.id} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="min-w-0">
                     <p className="font-medium text-gray-900">{issuance.membership.member.name}</p>
                     <p className="text-sm text-gray-600">
                       Card #{issuance.membership.membershipNumber.cardNumber} • {issuance.membership.subscriptionPlan.name}
@@ -337,6 +372,7 @@ export default function CardQueuePage() {
                   <Button
                     size="sm"
                     variant="primary"
+                    className="w-full sm:w-auto shrink-0"
                     onClick={() => handleIssue(issuance)}
                     loading={actionLoading}
                     disabled={needsCredit(issuance) && outOfCredits}
@@ -351,9 +387,9 @@ export default function CardQueuePage() {
       </Card>
 
       {/* Pending Payment */}
-      <Card>
+      <Card id="payment" className="scroll-mt-24">
         <CardHeader>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <Badge variant="default">Pending Payment</Badge>
             <span className="text-sm text-gray-500">
               Awaiting payment completion
@@ -366,14 +402,19 @@ export default function CardQueuePage() {
           ) : (
             <div className="space-y-3">
               {queueData.queue.pending.map((issuance) => (
-                <div key={issuance.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
-                  <div>
+                <div key={issuance.id} className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between p-4 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="min-w-0">
                     <p className="font-medium text-gray-900">{issuance.membership.member.name}</p>
                     <p className="text-sm text-gray-600">
                       Card #{issuance.membership.membershipNumber.cardNumber} • {issuance.membership.subscriptionPlan.name}
                     </p>
                   </div>
-                  <Badge variant="warning">Awaiting Payment</Badge>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                    <Badge variant="warning">Awaiting Payment</Badge>
+                    <Link href={`/admin/memberships/${issuance.membership.id}`} className="w-full sm:w-auto">
+                      <Button size="sm" variant="secondary" className="w-full">Record payment</Button>
+                    </Link>
+                  </div>
                 </div>
               ))}
             </div>
@@ -394,8 +435,8 @@ export default function CardQueuePage() {
               <p className="font-medium">{selectedCard.membership.member.name}</p>
             </div>
             <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
-              <p className="text-sm text-yellow-700">Track 2 data (till swipe):</p>
-              <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">
+              <p className="text-sm text-yellow-700">Magstripe data (till swipe):</p>
+              <p className="text-2xl font-mono font-bold text-yellow-900 mt-1 break-all">
                 {selectedCard.magstripeData}
               </p>
             </div>
@@ -417,7 +458,7 @@ export default function CardQueuePage() {
                 {encodeMessage}
               </p>
             )}
-            <div className="flex justify-end gap-3 pt-4">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3 pt-4">
               <Button variant="secondary" onClick={closeEncodeModal}>
                 Cancel
               </Button>
@@ -442,6 +483,15 @@ export default function CardQueuePage() {
           </div>
         )}
       </Modal>
+
+      <BatchEncodeModal
+        isOpen={batchOpen}
+        cards={batchCards}
+        writer={writer}
+        outOfCredits={outOfCredits}
+        onClose={() => setBatchOpen(false)}
+        onComplete={() => fetchQueue(true)}
+      />
 
       {/* Encoding Instructions Modal */}
       <Modal
@@ -472,7 +522,7 @@ export default function CardQueuePage() {
               <li>Take the physical card matching the card number shown</li>
               <li>Connect the card writer to your computer</li>
               <li>Copy the magstripe data exactly as shown</li>
-              <li>Write the data to Track 2 of the card (or use Write with MSRx6 on this page)</li>
+              <li>Write the magstripe data as shown (or use Write with MSRx6 on this page)</li>
               <li>Click "Mark Encoded" to confirm</li>
             </ol>
           </div>

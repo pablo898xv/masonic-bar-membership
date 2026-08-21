@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
     const successUrl = sameOriginPath(returnUrl, '/admin/credits?paid=1')
     const html = checkoutPage({
       title: 'Buy credit pack',
-      subtitle: 'Mock open banking checkout for local development (Hope Macy is not connected yet).',
+      subtitle: 'Mock open banking checkout for local development (open banking is not connected yet).',
       details: `<strong>Venue:</strong> ${escapeHtml(tenant.name)}<br><strong>Pack:</strong> ${escapeHtml(pack.name)} (${pack.credits} credits)<br><strong>Method:</strong> Open Banking`,
       amount,
       paymentId,
@@ -142,7 +142,7 @@ export async function GET(request: NextRequest) {
 
   const html = checkoutPage({
     title: 'Pay for your membership',
-    subtitle: 'Mock checkout for local development (Hope Macy is not connected yet).',
+    subtitle: 'Mock checkout for local development (open banking is not connected yet).',
       details: `<strong>Member:</strong> ${escapeHtml(member?.name || 'Unknown')}<br><strong>Plan:</strong> ${escapeHtml(plan?.name || 'Unknown')}<br><strong>Method:</strong> Open Banking`,
     amount,
     paymentId,

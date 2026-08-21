@@ -1,7 +1,10 @@
 import { getAppSettings } from './settings'
+import { publicAppBaseUrl } from './public-url'
+import { maskAccountNumber, maskSortCode } from './bank-account'
 
 const DEFAULT_BASE_URL = 'https://pis.hopemacy.com/api/v1'
 const DEFAULT_MAX_AMOUNT = 1000
+export const HOPE_MACY_RETURN_PATH = '/api/payments/return'
 
 export type HopeMacyStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'VOIDED'
 
@@ -27,10 +30,6 @@ type SessionCache = { token: string; expiresAt: number }
 
 let sessionCache: SessionCache | null = null
 
-function digits(value: string) {
-  return value.replace(/\D/g, '')
-}
-
 function statementReference(value: string) {
   const cleaned = value.replace(/[^A-Za-z0-9&.\/-]+/g, '-').replace(/^-+|-+$/g, '')
   return (cleaned || 'credits').slice(0, 18)
@@ -41,24 +40,67 @@ function creditorId(value: string) {
 }
 
 function redirectUriForHopeMacy(returnUrl: string) {
+  let origin: URL
   try {
-    const parsed = new URL(returnUrl)
-    const host = parsed.hostname.toLowerCase()
-    if (parsed.protocol !== 'https:' || host === 'localhost' || host === '127.0.0.1') return null
-    return parsed.toString()
+    origin = new URL(publicAppBaseUrl())
   } catch {
     return null
   }
+  const host = origin.hostname.toLowerCase()
+  if (origin.protocol !== 'https:' || host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0') {
+    return null
+  }
+
+  // Open banking whitelist matching ignores query strings, so the path must stay
+  // fixed. Identity goes in the query (same pattern as Pixl Pay /p/return?code=).
+  const dest = new URL(HOPE_MACY_RETURN_PATH, origin.origin)
+  try {
+    const incoming = new URL(returnUrl, origin.origin)
+    for (const key of ['membershipId', 'kind', 'paymentId']) {
+      const value = incoming.searchParams.get(key)
+      if (value) dest.searchParams.set(key, value)
+    }
+  } catch {
+    // Keep the fixed path even if the inbound return URL is malformed.
+  }
+  return dest.toString()
 }
 
 export class HopeMacyApiError extends Error {
   constructor(
     message: string,
-    readonly status = 0
+    readonly status = 0,
+    readonly err: Record<string, unknown> | null = null
   ) {
     super(message)
     this.name = 'HopeMacyApiError'
   }
+
+  apiCode() {
+    const code = this.err?.code
+    return typeof code === 'number' ? code : typeof code === 'string' && /^\d+$/.test(code) ? Number(code) : null
+  }
+}
+
+function hopeMacyErrorDetail(json: Record<string, unknown>) {
+  const err = json.err
+  if (!err || typeof err !== 'object' || Array.isArray(err)) return { message: '', err: null as Record<string, unknown> | null }
+  const envelope = err as Record<string, unknown>
+  const code = envelope.code
+  const parm = envelope.parm
+  if (code === 3403 || (parm && typeof parm === 'object' && !Array.isArray(parm) && (parm as Record<string, unknown>).redirectUri === 3403)) {
+    return {
+      message: `Open banking rejected the return URL. Whitelist ${publicAppBaseUrl()}${HOPE_MACY_RETURN_PATH} on the open banking app (query parameters are ignored for matching).`,
+      err: envelope,
+    }
+  }
+  if (typeof code === 'number' || typeof code === 'string') {
+    return { message: `error ${code}`, err: envelope }
+  }
+  if (parm && typeof parm === 'object') {
+    return { message: `field errors ${JSON.stringify(parm)}`, err: envelope }
+  }
+  return { message: '', err: envelope }
 }
 
 async function settings() {
@@ -98,10 +140,15 @@ async function createSession() {
     },
     body: JSON.stringify({ expiryPeriod: ttl }),
   })
-  const json = (await response.json().catch(() => ({}))) as { data?: { sessToken?: string } }
+  const json = (await response.json().catch(() => ({}))) as { data?: { sessToken?: string }; err?: unknown }
   const token = json.data?.sessToken || ''
   if (!response.ok || !token) {
-    throw new HopeMacyApiError('Hope Macy create-session failed', response.status)
+    const detail = hopeMacyErrorDetail(json as Record<string, unknown>)
+    throw new HopeMacyApiError(
+      detail.message || 'Open banking create-session failed',
+      response.status,
+      detail.err
+    )
   }
   sessionCache = { token, expiresAt: Date.now() + Math.max(ttl - 60, 30) * 1000 }
   return token
@@ -132,7 +179,15 @@ async function send(method: string, path: string, body?: unknown, retried = fals
 
   const json = (await response.json().catch(() => ({}))) as Record<string, unknown>
   if (!response.ok) {
-    throw new HopeMacyApiError(`Hope Macy ${method} ${path} failed with HTTP ${response.status}`, response.status)
+    const detail = hopeMacyErrorDetail(json)
+    const suffix = detail.message && !detail.message.startsWith('Open banking rejected') ? ` (${detail.message})` : ''
+    throw new HopeMacyApiError(
+      detail.message.startsWith('Open banking rejected')
+        ? detail.message
+        : `Open banking ${method} ${path} failed with HTTP ${response.status}${suffix}`,
+      response.status,
+      detail.err
+    )
   }
   return json
 }
@@ -149,6 +204,21 @@ export function toLegacyPaymentStatus(status: HopeMacyStatus) {
     default:
       return 'pending'
   }
+}
+
+export function isHopeMacyFailedRedirectHint(status?: string | null) {
+  const hint = (status || '').trim().toLowerCase()
+  return (
+    hint === 'denied' ||
+    hint === 'rejected' ||
+    hint === 'cancelled' ||
+    hint === 'canceled' ||
+    hint === 'failed' ||
+    hint === 'error' ||
+    hint === 'expired' ||
+    hint === 'acceptedrejected' ||
+    hint === 'voided'
+  )
 }
 
 export function normalizeHopeMacyStatus(poStatus: string): HopeMacyStatus {
@@ -176,7 +246,7 @@ export async function voidPaymentOrder(poId: string) {
   try {
     await send('POST', `/pos/${encodeURIComponent(poId)}/void`)
   } catch (error) {
-    console.warn('Hope Macy void skipped', error)
+    console.warn('Open banking void skipped', error)
   }
 }
 
@@ -212,23 +282,23 @@ export async function initiateOpenBankingPayment(request: OpenBankingInitiation)
       success: false as const,
       paymentId: '',
       paymentUrl: '',
-      error: `This payment exceeds the Hope Macy maximum of £${maxAmount.toFixed(2)}.`,
+      error: `This payment exceeds the open banking maximum of £${maxAmount.toFixed(2)}.`,
     }
   }
 
-  const sortCode = digits(request.creditor.sortCode)
-  const accountNumber = digits(request.creditor.accountNumber)
+  const sortCode = maskSortCode(request.creditor.sortCode)
+  const accountNumber = maskAccountNumber(request.creditor.accountNumber)
   if (!(await hopeMacyEnabled()) || sortCode.length !== 6 || accountNumber.length !== 8) {
     if (!(await hopeMacyEnabled())) {
       if (mockPaymentsAllowed()) {
-        console.warn('Hope Macy is not configured; using mock open banking checkout')
+        console.warn('Open banking is not configured; using mock open banking checkout')
         return mockPayment(request)
       }
       return {
         success: false as const,
         paymentId: '',
         paymentUrl: '',
-        error: 'Open banking is not configured. A super admin must add Hope Macy credentials in Platform settings.',
+        error: 'Open banking is not configured. A super admin must add open banking credentials in Platform settings.',
       }
     }
     return {
@@ -260,24 +330,24 @@ export async function initiateOpenBankingPayment(request: OpenBankingInitiation)
     const data = (created.data || {}) as { poId?: string }
     const poId = data.poId || ''
     if (!poId) {
-      return { success: false as const, paymentId: '', paymentUrl: '', error: 'Hope Macy did not return a payment order id' }
+      return { success: false as const, paymentId: '', paymentUrl: '', error: 'Open banking did not return a payment order id' }
     }
 
     const link = await send('POST', `/pos/${encodeURIComponent(poId)}/link`)
     const linkData = (link.data || {}) as { paymentUrl?: string }
     const paymentUrl = linkData.paymentUrl || ''
     if (!paymentUrl) {
-      return { success: false as const, paymentId: poId, paymentUrl: '', error: 'Hope Macy did not return a payment URL' }
+      return { success: false as const, paymentId: poId, paymentUrl: '', error: 'Open banking did not return a payment URL' }
     }
 
     return { success: true as const, paymentId: poId, paymentUrl, metadata: request.metadata }
   } catch (error) {
-    console.error('Hope Macy API error:', error)
+    console.error('Open banking API error:', error)
     return {
       success: false as const,
       paymentId: '',
       paymentUrl: '',
-      error: error instanceof Error ? error.message : 'Failed to start Hope Macy payment',
+      error: error instanceof Error ? error.message : 'Failed to start open banking payment',
     }
   }
 }

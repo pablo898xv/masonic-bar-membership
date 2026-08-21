@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminUsersCollection } from '@/lib/db'
-import { hashPassword, generateToken, authCookie } from '@/lib/auth'
+import { hashPassword, sessionTokenFor, authCookie } from '@/lib/auth'
+import { loginUserResponse } from '@/lib/admin-totp'
 import { adminCreateSchema } from '@/lib/validation'
 
 export async function POST(request: NextRequest) {
@@ -37,15 +38,10 @@ export async function POST(request: NextRequest) {
       isActive: true,
     })
 
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    })
+    const token = sessionTokenFor(user)
 
-    const { passwordHash: _, ...userWithoutPassword } = user
     return authCookie(
-      NextResponse.json({ user: userWithoutPassword }, { status: 201 }),
+      NextResponse.json(loginUserResponse(user), { status: 201 }),
       token
     )
   } catch (error) {

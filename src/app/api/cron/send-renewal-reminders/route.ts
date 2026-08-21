@@ -4,6 +4,7 @@ import { requireCronOrAdmin } from '@/lib/auth'
 import { emailService } from '@/lib/email'
 import { sendMembershipSms } from '@/lib/sms'
 import { requireTenant } from '@/lib/tenancy'
+import { publicAppBaseUrl } from '@/lib/public-url'
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
           continue
         }
 
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+        const baseUrl = publicAppBaseUrl()
         const token = encodeURIComponent(membership.accessToken || '')
         const renewalLink = `${baseUrl}/membership/renew?id=${encodeURIComponent(membership.id)}${
           token ? `&token=${token}` : ''

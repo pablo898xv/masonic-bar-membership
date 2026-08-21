@@ -1,9 +1,13 @@
 import QRCode from 'qrcode'
+import { membershipsCollection, tenantsCollection } from './db'
+import { membershipQrGatewayUrl } from './card-link'
 import { getMagstripePrefix } from './settings'
+import { buildMembershipQrPayload, isTillQrPayload, qrCodeModeOf } from './qr-payload'
 
 export interface QRCodeOptions {
   width?: number
   margin?: number
+  errorCorrectionLevel?: 'L' | 'M' | 'Q' | 'H'
   color?: {
     dark?: string
     light?: string
@@ -12,6 +16,10 @@ export interface QRCodeOptions {
 
 function byteSegment(data: string) {
   return [{ data: Buffer.from(data, 'latin1'), mode: 'byte' as const }]
+}
+
+function qrInput(data: string) {
+  return isTillQrPayload(data) ? byteSegment(data) : data
 }
 
 /**
@@ -31,7 +39,7 @@ export async function generateQRCodeDataURL(
     ...options,
   }
 
-  return QRCode.toDataURL(byteSegment(data), defaultOptions)
+  return QRCode.toDataURL(qrInput(data), defaultOptions)
 }
 
 /**
@@ -51,7 +59,7 @@ export async function generateQRCodeBuffer(
     ...options,
   }
 
-  return QRCode.toBuffer(byteSegment(data), defaultOptions)
+  return QRCode.toBuffer(qrInput(data), defaultOptions)
 }
 
 /**
@@ -71,15 +79,43 @@ export async function generateQRCodeSVG(
     ...options,
   }
 
-  return QRCode.toString(byteSegment(data), { ...defaultOptions, type: 'svg' })
+  return QRCode.toString(qrInput(data), { ...defaultOptions, type: 'svg' })
 }
 
 /**
  * Format membership card number for QR encoding.
- * Till scanners expect ISO Track 2 sentinels: ;payload?
+ * Till mode uses ISO Track 2 sentinels: ;payload?
+ * URL mode encodes a stable gateway URL on this platform (/q/{tenant}/{cardNumber}),
+ * which redirects to the venue's current destination.
  */
-export async function formatMembershipQRData(cardNumber: number, tenantId?: string): Promise<string> {
-  const prefix = await getMagstripePrefix(tenantId)
-  const payload = `${prefix}${cardNumber}`.trim().replace(/^[%;+]/, '').replace(/\?+$/, '')
-  return `;${payload}?`
+export async function formatMembershipQRData(
+  cardNumber: number,
+  tenantId?: string,
+  context?: { membershipId?: string; shortCode?: string }
+): Promise<string> {
+  const tenant = tenantId ? await tenantsCollection.findById(tenantId) : null
+  const prefix = tenant?.magstripePrefix || (await getMagstripePrefix(tenantId))
+  let shortCode = context?.shortCode
+  if (!shortCode && context?.membershipId) {
+    const membership = await membershipsCollection.findById(context.membershipId)
+    shortCode = membership?.shortCode
+  }
+  const gatewayUrl =
+    qrCodeModeOf(tenant?.qrCodeMode) === 'URL' && (tenant?.slug || shortCode)
+      ? membershipQrGatewayUrl({
+          tenantSlug: tenant?.slug,
+          cardNumber,
+          shortCode,
+        })
+      : undefined
+  return buildMembershipQrPayload({
+    cardNumber,
+    magstripePrefix: prefix,
+    qrCodeMode: tenant?.qrCodeMode,
+    qrRedirectUrl: tenant?.qrRedirectUrl,
+    membershipId: context?.membershipId,
+    shortCode,
+    tenantSlug: tenant?.slug,
+    gatewayUrl,
+  })
 }

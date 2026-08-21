@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useSearchParams } from 'next/navigation'
-import Link from 'next/link'
+import { PublicCardStatus } from '@/components/brand/public-card-status'
 import { Button } from '@/components/ui/button'
+import { type CardUnavailableReason } from '@/lib/card-unavailable'
 
 interface CardData {
   membershipId: string
@@ -27,13 +28,14 @@ export default function MembershipCardPage() {
   const justPaid = searchParams.get('paid') === '1'
 
   const [card, setCard] = useState<CardData | null>(null)
-  const [error, setError] = useState('')
+  const [brand, setBrand] = useState({ venueName: '', logoUrl: '' })
+  const [errorReason, setErrorReason] = useState<CardUnavailableReason | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     async function load() {
       if (!params.id || !token) {
-        setError('This card link is missing or invalid.')
+        setErrorReason('not_found')
         setLoading(false)
         return
       }
@@ -44,12 +46,26 @@ export default function MembershipCardPage() {
             `/api/payments/initiate?membershipId=${encodeURIComponent(params.id)}&token=${encodeURIComponent(token)}`
           )
         }
-        const res = await fetch(`/api/memberships/${params.id}/card?token=${encodeURIComponent(token)}`)
+        const [res, brandingRes] = await Promise.all([
+          fetch(`/api/memberships/${params.id}/card?token=${encodeURIComponent(token)}`),
+          fetch('/api/branding'),
+        ])
         const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Unable to load card')
+        const branding = brandingRes.ok ? await brandingRes.json() : null
+        if (branding?.name) {
+          setBrand({ venueName: branding.name, logoUrl: branding.logoUrl || '' })
+        }
+        if (!res.ok) {
+          setErrorReason('not_found')
+          return
+        }
         setCard(data)
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : 'Unable to load card')
+        setBrand({
+          venueName: data.tenantName || branding?.name || '',
+          logoUrl: data.logoUrl || branding?.logoUrl || '',
+        })
+      } catch {
+        setErrorReason('not_found')
       } finally {
         setLoading(false)
       }
@@ -68,20 +84,29 @@ export default function MembershipCardPage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-950">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-white" />
+      <div className="flex min-h-full items-center justify-center bg-gray-50">
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
       </div>
     )
   }
 
-  if (error || !card) {
+  if (errorReason || !card) {
     return (
-      <div className="min-h-screen bg-slate-950 px-4 py-16 text-center text-white">
-        <p className="text-red-300">{error || 'Card not found'}</p>
-        <Link href="/membership/lookup" className="mt-4 inline-block text-blue-300 underline">
-          Look up your card
-        </Link>
-      </div>
+      <PublicCardStatus
+        reason={errorReason || 'not_found'}
+        venueName={brand.venueName}
+        logoUrl={brand.logoUrl}
+      />
+    )
+  }
+
+  if (card.status === 'CANCELLED' || card.status === 'EXPIRED') {
+    return (
+      <PublicCardStatus
+        reason={card.status === 'CANCELLED' ? 'revoked' : 'expired'}
+        venueName={card.tenantName || brand.venueName}
+        logoUrl={card.logoUrl || brand.logoUrl}
+      />
     )
   }
 
@@ -90,19 +115,19 @@ export default function MembershipCardPage() {
     : '—'
 
   return (
-    <div className="min-h-screen bg-slate-950 px-4 py-10 text-white">
+    <div className="min-h-full bg-gray-50 px-4 py-10 text-gray-900">
       <div className="mx-auto max-w-md">
-        <p className="text-center text-sm text-slate-400">{card.tenantName || 'Membership Manager'}</p>
+        <p className="text-center text-sm text-gray-500">{card.tenantName || 'Membership Manager'}</p>
         <h1 className="mt-1 text-center text-2xl font-bold">
           {justPaid ? 'You are a member' : 'Your membership card'}
         </h1>
         {justPaid && (
-          <p className="mt-2 text-center text-sm text-slate-300">
+          <p className="mt-2 text-center text-sm text-gray-600">
             Save this page or add the QR code to your phone so you can show it at the bar.
           </p>
         )}
 
-        <div className="mt-8 overflow-hidden rounded-3xl bg-gradient-to-br from-slate-800 to-slate-900 shadow-2xl ring-1 ring-white/10">
+        <div className="mt-8 overflow-hidden rounded-3xl bg-gradient-to-br from-slate-800 to-slate-900 text-white shadow-2xl ring-1 ring-black/10 dark:ring-white/10">
           <div className="px-6 py-5">
             {card.logoUrl ? (
               <img src={card.logoUrl} alt="" className="mb-4 h-14 max-w-[14rem] object-contain" />
@@ -123,7 +148,7 @@ export default function MembershipCardPage() {
           </div>
 
           {card.qrCodeImage && card.status === 'ACTIVE' ? (
-            <div className="bg-white px-6 py-6 text-center">
+            <div className="bg-white dark:bg-white px-6 py-6 text-center">
               <img src={card.qrCodeImage} alt="Membership QR code" className="mx-auto h-56 w-56" />
               <p className="mt-3 text-sm text-slate-600">Show this code at the bar</p>
             </div>
@@ -131,7 +156,9 @@ export default function MembershipCardPage() {
             <div className="px-6 py-8 text-center text-slate-300">
               {card.cardType === 'PHYSICAL_CARD'
                 ? 'Your physical card is being prepared. Collect it at the bar.'
-                : 'This membership is not active yet.'}
+                : card.status === 'PENDING_PAYMENT'
+                  ? 'Payment is still outstanding, so this QR code has not been issued yet.'
+                  : 'This membership is not active yet.'}
             </div>
           )}
         </div>
@@ -145,9 +172,13 @@ export default function MembershipCardPage() {
           {card.appleWalletAvailable && (
             <a
               href={`/api/memberships/${card.membershipId}/wallet-pass?format=pkpass&token=${encodeURIComponent(token)}`}
-              className="block w-full rounded-lg bg-black py-2.5 text-center text-sm font-medium text-white ring-1 ring-white/20"
+              className="block"
             >
-              Add to Apple Wallet
+              <img
+                src="/add-to-apple-wallet.svg"
+                alt="Add to Apple Wallet"
+                className="mx-auto h-12 w-auto"
+              />
             </a>
           )}
           {card.googleWalletAvailable && (
@@ -156,25 +187,19 @@ export default function MembershipCardPage() {
               className="block"
             >
               <img
-                src="https://developers.google.com/static/wallet/images/add-to-google-wallet-badge.svg"
+                src="/add-to-google-wallet.svg"
                 alt="Add to Google Wallet"
                 className="mx-auto h-12 w-auto"
               />
             </a>
           )}
-          <p className="text-center text-xs text-slate-500">
+          <p className="text-center text-xs text-gray-500">
             On your phone, tap Share → Add to Home Screen to keep this card handy.
             {card.appleWalletAvailable || card.googleWalletAvailable
               ? ''
               : ' Apple Wallet and Google Wallet can be turned on in Settings once your issuer accounts are approved.'}
           </p>
         </div>
-
-        <p className="mt-8 text-center text-sm text-slate-500">
-          <Link href="/membership/lookup" className="hover:text-slate-300">
-            Lost this link? Look up your card
-          </Link>
-        </p>
       </div>
     </div>
   )

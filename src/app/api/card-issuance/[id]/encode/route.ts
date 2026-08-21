@@ -30,7 +30,7 @@ export async function POST(
     const membership = await membershipsCollection.findById(issuance.membershipId)
     if (!membership || membership.status !== 'ACTIVE') {
       return NextResponse.json(
-        { error: 'Associated membership must be active' },
+        { error: 'Associated membership must be active and paid before encoding' },
         { status: 400 }
       )
     }

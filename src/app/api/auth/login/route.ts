@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminUsersCollection } from '@/lib/db'
-import { verifyPassword, generateToken, authCookie } from '@/lib/auth'
+import { verifyPassword, sessionTokenFor, twoFactorTicketFor, authCookie } from '@/lib/auth'
+import { loginUserResponse } from '@/lib/admin-totp'
 import { adminLoginSchema } from '@/lib/validation'
 
 const WINDOW_MS = 15 * 60 * 1000
@@ -63,14 +64,14 @@ export async function POST(request: NextRequest) {
 
     attempts.delete(key)
 
-    const token = generateToken({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    })
+    if (user.totpEnabled && user.totpSecret) {
+      return NextResponse.json({
+        requiresTwoFactor: true,
+        ticket: twoFactorTicketFor(user),
+      })
+    }
 
-    const { passwordHash: _, ...userWithoutPassword } = user
-    return authCookie(NextResponse.json({ user: userWithoutPassword }), token)
+    return authCookie(NextResponse.json(loginUserResponse(user)), sessionTokenFor(user))
   } catch (error) {
     console.error('Error during login:', error)
     return NextResponse.json({ error: 'Login failed' }, { status: 500 })

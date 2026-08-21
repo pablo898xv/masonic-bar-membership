@@ -6,7 +6,8 @@ import {
   membershipNumbersCollection,
   subscriptionPlansCollection,
 } from '@/lib/db'
-import { getMagstripePrefix } from '@/lib/settings'
+import { getMagstripePrefix, getMagstripeTracks, magstripeEncodingCopy } from '@/lib/settings'
+import { isPaidMembershipStatus } from '@/lib/payment-methods'
 import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
@@ -61,10 +62,21 @@ export async function GET(request: NextRequest) {
       (issuance): issuance is NonNullable<typeof issuance> => issuance !== null
     )
 
+    const paidReady = validIssuances.filter(
+      (item) => item.queueStatus === 'READY_TO_ENCODE' && isPaidMembershipStatus(item.membership.status)
+    )
+    const unpaidOrPending = validIssuances.filter(
+      (item) =>
+        item.queueStatus === 'PENDING' ||
+        (item.queueStatus === 'READY_TO_ENCODE' && !isPaidMembershipStatus(item.membership.status))
+    )
+
     const queue = {
-      readyToEncode: validIssuances.filter((item) => item.queueStatus === 'READY_TO_ENCODE'),
-      encoded: validIssuances.filter((item) => item.queueStatus === 'ENCODED'),
-      pending: validIssuances.filter((item) => item.queueStatus === 'PENDING'),
+      readyToEncode: paidReady,
+      encoded: validIssuances.filter(
+        (item) => item.queueStatus === 'ENCODED' && isPaidMembershipStatus(item.membership.status)
+      ),
+      pending: unpaidOrPending,
       issued: validIssuances.filter((item) => item.queueStatus === 'ISSUED' || item.queueStatus === 'SHIPPED'),
     }
 
@@ -77,15 +89,11 @@ export async function GET(request: NextRequest) {
     }
     
     const magstripePrefix = await getMagstripePrefix(tenant.id)
+    const magstripeTracks = await getMagstripeTracks(tenant.id)
     return NextResponse.json({
       queue,
       summary,
-      encodingInstructions: {
-        prefix: magstripePrefix,
-        format: `${magstripePrefix}{CARD_NUMBER} written to Track 2`,
-        example: `${magstripePrefix}1500`,
-        note: 'Encode Track 2 exactly as shown (the till swipe track). The number printed on the back of the physical card must match.',
-      },
+      encodingInstructions: magstripeEncodingCopy(magstripePrefix, magstripeTracks),
     })
   } catch (error) {
     console.error('Error fetching card queue:', error)

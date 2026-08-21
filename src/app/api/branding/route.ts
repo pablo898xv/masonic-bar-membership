@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { publicPaymentOptions } from '@/lib/payment-options'
+import { publicSignupStatus } from '@/lib/signup-campaigns'
 import { requireTenant, tenantLogoPath } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
@@ -11,6 +13,8 @@ export async function GET(request: NextRequest) {
       slug: tenant.slug,
       logoUrl: tenantLogoPath(tenant, 'logo'),
       iconUrl: tenantLogoPath(tenant, 'icon'),
+      payments: await publicPaymentOptions(tenant),
+      signup: await publicSignupStatus(request, tenant.id),
     })
   } catch (err) {
     console.error('Error loading branding', err)

@@ -15,26 +15,27 @@ function phaseLabel(phase: ReturnType<typeof useMsrx6>['phase']) {
 export function Msrx6StatusBar() {
   const writer = useMsrx6()
   const chromeHint = !writer.support.bluetooth && !writer.support.serial
+  const status = writer.connected
+    ? [writer.deviceName, phaseLabel(writer.phase)].filter(Boolean).join(' · ')
+    : phaseLabel(writer.phase)
 
   return (
-    <div className="sticky top-0 z-20 border-b border-gray-200 bg-white">
-      <div className="px-8 py-3 flex flex-wrap items-center gap-3 justify-between">
-        <div className="flex items-center gap-3 min-w-0">
+    <div className="min-w-0 flex-1">
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 shrink items-center gap-2">
           <span
-            className={`h-2.5 w-2.5 rounded-full shrink-0 ${
+            className={`h-2.5 w-2.5 shrink-0 rounded-full ${
               writer.connected ? 'bg-green-500' : writer.phase === 'connecting' ? 'bg-amber-400' : 'bg-gray-300'
             }`}
           />
-          <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">
-              MSRx6 {writer.connected ? `· ${writer.deviceName}` : ''}
-            </p>
-            <p className="text-xs text-gray-500">{phaseLabel(writer.phase)}</p>
-          </div>
+          <p className="truncate text-sm text-gray-900 dark:text-white">
+            <span className="font-medium">MSRx6</span>
+            <span className="text-gray-500 dark:text-slate-400"> · {status}</span>
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1 text-xs text-gray-600 mr-2">
+        <div className="ml-auto flex min-w-0 items-center gap-2 overflow-x-auto">
+          <label className="flex shrink-0 items-center gap-1 text-xs text-gray-600 dark:text-slate-300">
             <input
               type="radio"
               name="msrx6-coercivity"
@@ -43,7 +44,7 @@ export function Msrx6StatusBar() {
             />
             HiCo
           </label>
-          <label className="flex items-center gap-1 text-xs text-gray-600 mr-2">
+          <label className="flex shrink-0 items-center gap-1 text-xs text-gray-600 dark:text-slate-300">
             <input
               type="radio"
               name="msrx6-coercivity"
@@ -94,13 +95,11 @@ export function Msrx6StatusBar() {
         </div>
       </div>
       {chromeHint && (
-        <p className="px-8 pb-3 text-xs text-amber-800">
+        <p className="pt-1 text-xs text-amber-800 dark:text-amber-200">
           Use Chrome or Edge on this Mac. Safari cannot talk to the writer.
         </p>
       )}
-      {writer.error && (
-        <p className="px-8 pb-3 text-xs text-red-700">{writer.error}</p>
-      )}
+      {writer.error && <p className="pt-1 text-xs text-red-700">{writer.error}</p>}
     </div>
   )
 }

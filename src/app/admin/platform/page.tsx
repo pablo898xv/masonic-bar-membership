@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { publicAppBaseUrl } from '@/lib/public-url'
+import { maskAccountNumber, maskSortCode } from '@/lib/bank-account'
 
 type SettingsForm = {
   hopeMacyBaseUrl: string
@@ -36,6 +38,12 @@ type SettingsForm = {
   googleWalletServiceAccountJsonSet: boolean
   googleWalletLogoUrl: string
   hopeMacyConfigured: boolean
+  stripeConfigured: boolean
+  stripePublishableKey: string
+  stripeSecretKey: string
+  stripeSecretKeySet: boolean
+  stripeWebhookSecret: string
+  stripeWebhookSecretSet: boolean
   emailConfigured: boolean
   walletConfigured: boolean
   googleWalletConfigured: boolean
@@ -85,6 +93,12 @@ const emptyForm: SettingsForm = {
   googleWalletServiceAccountJsonSet: false,
   googleWalletLogoUrl: '',
   hopeMacyConfigured: false,
+  stripeConfigured: false,
+  stripePublishableKey: '',
+  stripeSecretKey: '',
+  stripeSecretKeySet: false,
+  stripeWebhookSecret: '',
+  stripeWebhookSecretSet: false,
   emailConfigured: false,
   walletConfigured: false,
   googleWalletConfigured: false,
@@ -117,6 +131,7 @@ export default function PlatformSettingsPage() {
   const [saving, setSaving] = useState<string | null>(null)
   const [testPhone, setTestPhone] = useState('')
   const [testingSms, setTestingSms] = useState(false)
+  const [stripeWebhookUrl, setStripeWebhookUrl] = useState('')
   const [message, setMessage] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [loadError, setLoadError] = useState('')
 
@@ -124,7 +139,10 @@ export default function PlatformSettingsPage() {
     setForm((current) => ({
       ...current,
       ...data,
+      bankSortCode: maskSortCode(String(data.bankSortCode ?? '')),
       hopeMacyAppSecret: '',
+      stripeSecretKey: '',
+      stripeWebhookSecret: '',
       bankAccountNumber: '',
       smtpPass: '',
       passCertificatePassword: '',
@@ -154,6 +172,7 @@ export default function PlatformSettingsPage() {
 
   useEffect(() => {
     void fetchSettings()
+    setStripeWebhookUrl(`${window.location.origin}/api/payments/stripe/webhook`)
   }, [])
 
   const setField = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) => {
@@ -188,8 +207,17 @@ export default function PlatformSettingsPage() {
       hopeMacyAppSecret: form.hopeMacyAppSecret,
       hopeMacyMaxAmount: form.hopeMacyMaxAmount,
       bankAccountName: form.bankAccountName,
-      bankSortCode: form.bankSortCode,
-      bankAccountNumber: form.bankAccountNumber,
+      bankSortCode: maskSortCode(form.bankSortCode),
+      bankAccountNumber: maskAccountNumber(form.bankAccountNumber),
+    })
+  }
+
+  const handleStripe = (event: FormEvent) => {
+    event.preventDefault()
+    void save('stripe', {
+      stripePublishableKey: form.stripePublishableKey,
+      stripeSecretKey: form.stripeSecretKey,
+      stripeWebhookSecret: form.stripeWebhookSecret,
     })
   }
 
@@ -278,7 +306,7 @@ export default function PlatformSettingsPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Platform settings</h1>
         <p className="text-gray-500 mt-1">
-          Super admin only. Hope Macy API credentials are shared by every venue. Membership payouts use each venue’s own bank account.
+          Super admin only. Open banking is the platform bank-pay option. Stripe is used when a venue buys credit packs by card. Membership card checkout uses each venue’s own processor keys.
         </p>
       </div>
 
@@ -301,14 +329,20 @@ export default function PlatformSettingsPage() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-gray-900">Hope Macy API</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Open banking</h2>
               <StatusBadge configured={form.hopeMacyConfigured} mockLabel="Mock payments" />
             </div>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleHopeMacy} className="space-y-4">
               <p className="text-sm text-gray-600">
-                Platform open banking credentials. Every venue uses this Hope Macy app. Leave App ID empty to keep using mock checkout locally.
+                Platform open banking credentials. Every venue uses this app. Whitelist{' '}
+                <span className="font-mono">
+                  {publicAppBaseUrl()}
+                  /api/payments/return
+                </span>{' '}
+                on the open banking application (query strings are ignored for that match). Leave App ID empty to keep using
+                mock checkout locally.
               </p>
               <Input
                 label="API base URL"
@@ -343,22 +377,77 @@ export default function PlatformSettingsPage() {
               <Input
                 label="Credit pack sort code"
                 value={form.bankSortCode}
-                onChange={(event) => setField('bankSortCode', event.target.value)}
-                placeholder="000000"
+                onChange={(event) => setField('bankSortCode', maskSortCode(event.target.value))}
+                placeholder="123456"
+                inputMode="numeric"
+                autoComplete="off"
+                className="font-mono"
               />
               <Input
                 label="Credit pack account number"
                 type="password"
                 value={form.bankAccountNumber}
-                onChange={(event) => setField('bankAccountNumber', event.target.value)}
-                placeholder={form.bankAccountNumberSet ? 'Leave blank to keep the current account number' : '8-digit account number'}
+                onChange={(event) => setField('bankAccountNumber', maskAccountNumber(event.target.value))}
+                placeholder={form.bankAccountNumberSet ? 'Leave blank to keep the current account number' : '12345678'}
                 autoComplete="new-password"
+                inputMode="numeric"
+                className="font-mono"
               />
               <p className="text-xs text-gray-500">
                 This account receives payment when a venue buys credits. Membership open banking payouts use the bank account on each venue’s Venue settings page.
               </p>
               <div className="flex justify-end">
-                <Button type="submit" loading={saving === 'hopeMacy'}>Save Hope Macy</Button>
+                <Button type="submit" loading={saving === 'hopeMacy'}>Save open banking</Button>
+              </div>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">Stripe</h2>
+              <StatusBadge configured={form.stripeConfigured} mockLabel="Not configured" />
+            </div>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleStripe} className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Platform Stripe account for venues buying credit packs by card. Membership card payments use each venue’s own Stripe (or other processor) keys in Venue settings.
+              </p>
+              <Input
+                label="Publishable key"
+                value={form.stripePublishableKey}
+                onChange={(event) => setField('stripePublishableKey', event.target.value)}
+                placeholder="pk_live_…"
+              />
+              <Input
+                label="Secret key"
+                type="password"
+                value={form.stripeSecretKey}
+                onChange={(event) => setField('stripeSecretKey', event.target.value)}
+                placeholder={form.stripeSecretKeySet ? 'Leave blank to keep the current secret' : 'sk_live_…'}
+                autoComplete="new-password"
+              />
+              <Input
+                label="Webhook signing secret"
+                type="password"
+                value={form.stripeWebhookSecret}
+                onChange={(event) => setField('stripeWebhookSecret', event.target.value)}
+                placeholder={form.stripeWebhookSecretSet ? 'Leave blank to keep the current secret' : 'whsec_…'}
+                autoComplete="new-password"
+              />
+              <div>
+                <p className="block text-sm font-medium text-gray-700 mb-1">Webhook endpoint</p>
+                <p className="px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 font-mono text-xs text-gray-900 break-all">
+                  {stripeWebhookUrl || '/api/payments/stripe/webhook'}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Add this URL in the Stripe Dashboard with checkout session completed and expired events.
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <Button type="submit" loading={saving === 'stripe'}>Save Stripe</Button>
               </div>
             </form>
           </CardContent>
@@ -457,7 +546,7 @@ export default function PlatformSettingsPage() {
                   value={form.googleWalletServiceAccountJson}
                   onChange={(event) => setField('googleWalletServiceAccountJson', event.target.value)}
                   rows={6}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 placeholder:text-gray-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 placeholder:text-gray-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   placeholder={
                     form.googleWalletServiceAccountJsonSet
                       ? 'Leave blank to keep the current key'
@@ -548,7 +637,7 @@ export default function PlatformSettingsPage() {
         <CardContent>
           <form onSubmit={handleSms} className="space-y-4">
             <p className="text-sm text-gray-600">
-              Platform Twilio account for every venue. Each successful SMS uses {form.creditsPerSms || '0.25'} credits from that venue. Venues cannot set their own SMS number or credentials.
+              Platform Twilio account for every venue. Each successful SMS uses {form.creditsPerSms || '0.25'} credits from that venue. Messages are only sent to UK mobiles beginning 07 or +44 7 — landlines are skipped and not charged. Venues cannot set their own SMS number or credentials.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
@@ -623,7 +712,7 @@ export default function PlatformSettingsPage() {
                   value={form.smsWelcomeTemplate}
                   onChange={(event) => setField('smsWelcomeTemplate', event.target.value)}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               <div>
@@ -635,7 +724,7 @@ export default function PlatformSettingsPage() {
                   value={form.smsRenewalTemplate}
                   onChange={(event) => setField('smsRenewalTemplate', event.target.value)}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               <div>
@@ -647,7 +736,7 @@ export default function PlatformSettingsPage() {
                   value={form.smsDigitalCardTemplate}
                   onChange={(event) => setField('smsDigitalCardTemplate', event.target.value)}
                   rows={3}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
               <p className="text-xs text-gray-500">
@@ -665,7 +754,7 @@ export default function PlatformSettingsPage() {
                 label="Send a test SMS"
                 value={testPhone}
                 onChange={(event) => setTestPhone(event.target.value)}
-                placeholder="07xxx or +447xxx"
+                placeholder="07xxx or +44 7xxx"
               />
             </div>
             <Button type="button" variant="secondary" loading={testingSms} onClick={() => void sendTestSms()}>

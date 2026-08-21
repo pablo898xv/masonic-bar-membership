@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { getMsrx6BrowserSupport, isMsrx6Cancelled, Msrx6Session, type Msrx6Transport } from './device'
-import { tracksFromMagstripe, tracksMatch, type Coercivity, type IsoTracks } from './protocol'
+import { tracksFromMagstripe, tracksMatch, summarizeIsoTracks, normalizeMagstripeTracks, type Coercivity, type IsoTracks, type MagstripeTrack } from './protocol'
 
 export type WriterPhase = 'idle' | 'connecting' | 'ready' | 'writing' | 'verifying' | 'reading'
 export type ConnectMethod = Msrx6Transport | 'bluetooth-all' | 'remembered'
@@ -48,10 +48,10 @@ export type Msrx6Writer = {
   connect: (method: ConnectMethod) => Promise<void>
   disconnect: () => Promise<void>
   applyCoercivity: (mode: Coercivity) => Promise<void>
-  encodeCard: (magstripeData: string) => Promise<IsoTracks>
+  encodeCard: (magstripeData: string, tracks?: MagstripeTrack[]) => Promise<IsoTracks>
   readCard: () => Promise<IsoTracks>
   cancelOperation: () => Promise<void>
-  previewTracks: (magstripeData: string) => IsoTracks
+  previewTracks: (magstripeData: string, tracks?: MagstripeTrack[]) => IsoTracks
 }
 
 const Msrx6Context = createContext<Msrx6Writer | null>(null)
@@ -72,6 +72,7 @@ function useMsrx6Controller(): Msrx6Writer {
   const [deviceName, setDeviceName] = useState<string | null>(null)
   const [transport, setTransport] = useState<Msrx6Transport | null>(null)
   const [coercivity, setCoercivity] = useState<Coercivity>('hico')
+  const magstripeTracksRef = useRef<MagstripeTrack[] | null>(null)
   const [support, setSupport] = useState({
     bluetooth: false,
     serial: false,
@@ -163,6 +164,7 @@ function useMsrx6Controller(): Msrx6Writer {
     const session = sessionRef.current
     if (session) session.onDrop = null
     sessionRef.current = null
+    magstripeTracksRef.current = null
     setDeviceName(null)
     setTransport(null)
     setPhase('idle')
@@ -182,14 +184,28 @@ function useMsrx6Controller(): Msrx6Writer {
     }
   }, [])
 
-  const encodeCard = useCallback(async (magstripeData: string) => {
+  const loadMagstripeTracks = useCallback(async (override?: MagstripeTrack[]) => {
+    if (override?.length) return normalizeMagstripeTracks(override)
+    try {
+      const res = await fetch('/api/tenants/current')
+      const data = await res.json()
+      const tracks = normalizeMagstripeTracks(res.ok ? data.tenant?.magstripeTracks : undefined)
+      magstripeTracksRef.current = tracks
+      return tracks
+    } catch {
+      return magstripeTracksRef.current || normalizeMagstripeTracks()
+    }
+  }, [])
+
+  const encodeCard = useCallback(async (magstripeData: string, tracks?: MagstripeTrack[]) => {
     const session = sessionRef.current
     if (!session) {
       throw new Error('Connect the MSRx6 first from the bar at the top of the page.')
     }
 
     session.beginOperation()
-    const expected = tracksFromMagstripe(magstripeData)
+    const selected = await loadMagstripeTracks(tracks)
+    const expected = tracksFromMagstripe(magstripeData, selected)
     setError(null)
     setPhase('writing')
     try {
@@ -198,7 +214,7 @@ function useMsrx6Controller(): Msrx6Writer {
       const actual = await session.readIso()
       if (!tracksMatch(expected, actual)) {
         throw new Error(
-          `Verify mismatch. Wrote ${expected.track2 || expected.track1}, read ${actual.track2 || actual.track1 || '(empty)'}.`
+          `Verify mismatch. Wrote ${summarizeIsoTracks(expected)}, read ${summarizeIsoTracks(actual)}.`
         )
       }
       return expected
@@ -210,7 +226,7 @@ function useMsrx6Controller(): Msrx6Writer {
     } finally {
       setPhase((current) => (current === 'writing' || current === 'verifying' ? 'ready' : current))
     }
-  }, [])
+  }, [loadMagstripeTracks])
 
   const readCard = useCallback(async () => {
     const session = sessionRef.current
@@ -239,8 +255,8 @@ function useMsrx6Controller(): Msrx6Writer {
     )
   }, [setPhase])
 
-  const previewTracks = useCallback((magstripeData: string): IsoTracks => {
-    return tracksFromMagstripe(magstripeData)
+  const previewTracks = useCallback((magstripeData: string, tracks?: MagstripeTrack[]): IsoTracks => {
+    return tracksFromMagstripe(magstripeData, tracks || magstripeTracksRef.current || undefined)
   }, [])
 
   return {

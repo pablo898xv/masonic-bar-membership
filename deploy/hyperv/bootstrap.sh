@@ -62,6 +62,15 @@ if ! grep -q '^CRON_SECRET=' .env.local || grep -Eq '^CRON_SECRET=\s*$' .env.loc
     printf '\nCRON_SECRET=%s\n' "$cron" >> .env.local
   fi
 fi
+if ! grep -q '^MEMBER_PII_KEY=' .env.local || grep -q '^MEMBER_PII_KEY=local-dev-member-pii-key-not-for-production' .env.local; then
+  echo "==> Generating MEMBER_PII_KEY"
+  pii="$(openssl rand -hex 32)"
+  if grep -q '^MEMBER_PII_KEY=' .env.local; then
+    sed -i "s|^MEMBER_PII_KEY=.*|MEMBER_PII_KEY=${pii}|" .env.local
+  else
+    printf '\nMEMBER_PII_KEY=%s\n' "$pii" >> .env.local
+  fi
+fi
 
 # Advertise the VM IP in the public base URL when we can detect it.
 VM_IP="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -n1 || true)"

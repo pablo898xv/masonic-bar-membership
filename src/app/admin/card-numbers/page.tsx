@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +17,7 @@ interface CardNumber {
   isAssigned: boolean
   assignedAt?: string
   magstripeData: string
+  canEncode?: boolean
   membership?: {
     id: string
     status: string
@@ -123,6 +125,10 @@ export default function CardNumbersPage() {
   }
 
   const handleWriterEncode = async (card: CardNumber) => {
+    if (card.canEncode === false) {
+      setEncodeMessage('This membership has not been paid. Encode is blocked until payment is completed.')
+      return
+    }
     setActionLoading(true)
     setEncodeMessage('Sending write command. Swipe the blank card through the MSRx6 now.')
     try {
@@ -145,6 +151,10 @@ export default function CardNumbersPage() {
   }
 
   const handleManualEncode = async (card: CardNumber) => {
+    if (card.canEncode === false) {
+      setEncodeMessage('This membership has not been paid. Encode is blocked until payment is completed.')
+      return
+    }
     setActionLoading(true)
     try {
       await markEncodedIfQueued(card)
@@ -159,12 +169,12 @@ export default function CardNumbersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Card Numbers</h1>
           <p className="text-gray-500 mt-1">Manage membership card number inventory</p>
         </div>
-        <Button onClick={() => setShowImportModal(true)}>
+        <Button onClick={() => setShowImportModal(true)} className="w-full sm:w-auto">
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
           </svg>
@@ -202,9 +212,9 @@ export default function CardNumbersPage() {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <span className="text-sm text-gray-500">Filter:</span>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 size="sm"
                 variant={filter === 'all' ? 'primary' : 'ghost'}
@@ -251,7 +261,7 @@ export default function CardNumbersPage() {
                     onClick={() => {
                       setEncodeMessage(null)
                       setSelected(num)
-                      if (writer.connected) {
+                      if (num.canEncode !== false && writer.connected) {
                         void handleWriterEncode(num)
                       }
                     }}
@@ -268,21 +278,34 @@ export default function CardNumbersPage() {
                       </p>
                     )}
                     <Badge
-                      variant={num.isAssigned ? 'info' : 'success'}
+                      variant={
+                        !num.isAssigned
+                          ? 'success'
+                          : num.membership?.status === 'PENDING_PAYMENT'
+                            ? 'warning'
+                            : 'info'
+                      }
                       className="mt-1"
                     >
-                      {num.isAssigned ? 'Assigned' : 'Available'}
+                      {!num.isAssigned
+                        ? 'Available'
+                        : num.membership?.status === 'PENDING_PAYMENT'
+                          ? 'Unpaid'
+                          : 'Assigned'}
                     </Badge>
-                    <p className="text-xs text-blue-700 mt-2">Encode</p>
+                    <p className="text-xs text-blue-700 mt-2">
+                      {num.isAssigned && num.canEncode === false ? 'Awaiting payment' : 'Encode'}
+                    </p>
                   </button>
                 ))}
               </div>
 
-              {pagination.totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
-                  <p className="text-sm text-gray-500">
-                    Showing {cardNumbers.length} of {pagination.total} numbers
-                  </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-4 pt-4 border-t border-gray-200">
+                <p className="text-sm text-gray-500">
+                  Showing {cardNumbers.length} of {pagination.total} numbers
+                  {pagination.totalPages > 1 ? ` · page ${pagination.page} of ${pagination.totalPages}` : ''}
+                </p>
+                {pagination.totalPages > 1 && (
                   <div className="flex gap-2">
                     <Button
                       variant="secondary"
@@ -301,8 +324,8 @@ export default function CardNumbersPage() {
                       Next
                     </Button>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
             </>
           )}
         </CardContent>
@@ -313,7 +336,29 @@ export default function CardNumbersPage() {
         onClose={closeEncodeModal}
         title={selected ? `Encode card #${selected.cardNumber}` : 'Encode card'}
       >
-        {selected && (
+        {selected && selected.canEncode === false ? (
+          <div className="space-y-4">
+            {selected.membership?.member && (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-500">Assigned to</p>
+                <p className="font-medium">{selected.membership.member.name}</p>
+              </div>
+            )}
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
+              This membership has not been paid. Encoding and QR issue stay blocked until an admin records payment on the membership.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={closeEncodeModal}>
+                Close
+              </Button>
+              {selected.membership?.id && (
+                <Link href={`/admin/memberships/${selected.membership.id}`}>
+                  <Button>Open membership</Button>
+                </Link>
+              )}
+            </div>
+          </div>
+        ) : selected && (
           <div className="space-y-4">
             {selected.membership?.member && (
               <div className="p-4 bg-gray-50 rounded-lg">
@@ -322,7 +367,7 @@ export default function CardNumbersPage() {
               </div>
             )}
             <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
-              <p className="text-sm text-yellow-700">Track 2 data (till swipe):</p>
+              <p className="text-sm text-yellow-700">Magstripe data (till swipe):</p>
               <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">
                 {selected.magstripeData}
               </p>

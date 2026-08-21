@@ -30,15 +30,21 @@ export async function POST(request: NextRequest) {
     }
 
     const { memberships } = await membershipsCollection.findMany({ memberId: member.id })
-    const active = memberships.filter((membership) => ['ACTIVE', 'PAID'].includes(membership.status))
+    const visible = memberships.filter((membership) =>
+      ['ACTIVE', 'PAID', 'EXPIRED'].includes(membership.status)
+    )
 
     const cards = await Promise.all(
-      active.map(async (membership) => {
+      visible.map(async (membership) => {
         const [membershipNumber, subscriptionPlan] = await Promise.all([
           membershipNumbersCollection.findById(membership.membershipNumberId),
           subscriptionPlansCollection.findById(membership.subscriptionPlanId),
         ])
         const token = membership.accessToken
+        const renewUrl =
+          token && (membership.status === 'ACTIVE' || membership.status === 'EXPIRED')
+            ? `/membership/renew?id=${encodeURIComponent(membership.id)}&token=${encodeURIComponent(token)}`
+            : null
         return {
           membershipId: membership.id,
           cardNumber: membershipNumber?.cardNumber,
@@ -46,7 +52,11 @@ export async function POST(request: NextRequest) {
           cardType: membership.cardType,
           status: membership.status,
           expiryDate: membership.expiryDate,
-          url: token ? membershipCardUrl(membership.id, token) : null,
+          url:
+            token && ['ACTIVE', 'PAID'].includes(membership.status)
+              ? membershipCardUrl(membership.id, token)
+              : null,
+          renewUrl,
         }
       })
     )

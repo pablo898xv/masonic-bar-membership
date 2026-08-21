@@ -5,14 +5,14 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { maskAccountNumber, maskSortCode } from '@/lib/bank-account'
 
 type VenuePayments = {
   name: string
-  slug: string
   bankAccountName: string
   bankSortCode: string
   bankAccountNumberSet: boolean
-  publicPath: string
+  openBankingEnabled: boolean
 }
 
 export function VenuePaymentsCard({ onSaved }: { onSaved?: (text: string) => void }) {
@@ -27,11 +27,10 @@ export function VenuePaymentsCard({ onSaved }: { onSaved?: (text: string) => voi
     if (!res.ok) throw new Error(data.error || 'Failed to load venue')
     setForm({
       name: data.tenant.name,
-      slug: data.tenant.slug,
       bankAccountName: data.tenant.bankAccountName || '',
-      bankSortCode: data.tenant.bankSortCode || '',
+      bankSortCode: maskSortCode(data.tenant.bankSortCode || ''),
       bankAccountNumberSet: Boolean(data.tenant.bankAccountNumberSet),
-      publicPath: data.tenant.publicPath,
+      openBankingEnabled: data.tenant.openBankingEnabled !== false,
     })
   }
 
@@ -50,16 +49,17 @@ export function VenuePaymentsCard({ onSaved }: { onSaved?: (text: string) => voi
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           paymentMode: 'OWN',
+          openBankingEnabled: form.openBankingEnabled,
           bankAccountName: form.bankAccountName,
-          bankSortCode: form.bankSortCode,
-          ...(bankAccountNumber ? { bankAccountNumber } : {}),
+          bankSortCode: maskSortCode(form.bankSortCode),
+          ...(bankAccountNumber ? { bankAccountNumber: maskAccountNumber(bankAccountNumber) } : {}),
         }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to save venue payments')
       setBankAccountNumber('')
       await load()
-      onSaved?.('Venue payout account saved')
+      onSaved?.('Open banking settings saved')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save')
     } finally {
@@ -76,18 +76,35 @@ export function VenuePaymentsCard({ onSaved }: { onSaved?: (text: string) => voi
       <CardHeader>
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold text-gray-900">Open banking payouts</h2>
-          <Badge variant={form.bankAccountNumberSet ? 'info' : 'warning'}>
-            {form.bankAccountNumberSet ? 'Bank account set' : 'Bank account needed'}
+          <Badge
+            variant={
+              !form.openBankingEnabled ? 'default' : form.bankAccountNumberSet ? 'success' : 'warning'
+            }
+          >
+            {!form.openBankingEnabled
+              ? 'Off'
+              : form.bankAccountNumberSet
+                ? 'Live'
+                : 'Bank account needed'}
           </Badge>
         </div>
       </CardHeader>
       <CardContent>
         <form onSubmit={save} className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Membership payments for <span className="font-medium">{form.name}</span> are paid into this account via Hope Macy.
-            Public signup:{' '}
-            <code className="text-xs bg-gray-100 px-1 py-0.5 rounded">{form.publicPath}</code>
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <p className="text-sm text-gray-600">
+              Membership payments for <span className="font-medium">{form.name}</span> are paid into this
+              account via open banking. Members buy online only through a campaign link from Venue settings.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-gray-700 shrink-0">
+              <input
+                type="checkbox"
+                checked={form.openBankingEnabled}
+                onChange={(event) => setForm({ ...form, openBankingEnabled: event.target.checked })}
+              />
+              Enable
+            </label>
+          </div>
           <Input
             label="Account name"
             value={form.bankAccountName}
@@ -96,20 +113,25 @@ export function VenuePaymentsCard({ onSaved }: { onSaved?: (text: string) => voi
           <Input
             label="Sort code"
             value={form.bankSortCode}
-            onChange={(event) => setForm({ ...form, bankSortCode: event.target.value })}
-            placeholder="000000"
+            onChange={(event) => setForm({ ...form, bankSortCode: maskSortCode(event.target.value) })}
+            placeholder="123456"
+            inputMode="numeric"
+            autoComplete="off"
+            className="font-mono"
           />
           <Input
             label="Account number"
             type="password"
             value={bankAccountNumber}
-            onChange={(event) => setBankAccountNumber(event.target.value)}
-            placeholder={form.bankAccountNumberSet ? 'Leave blank to keep the current account number' : '8-digit account number'}
+            onChange={(event) => setBankAccountNumber(maskAccountNumber(event.target.value))}
+            placeholder={form.bankAccountNumberSet ? 'Leave blank to keep the current account number' : '12345678'}
             autoComplete="new-password"
+            inputMode="numeric"
+            className="font-mono"
           />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex justify-end">
-            <Button type="submit" loading={saving}>Save payout account</Button>
+            <Button type="submit" loading={saving}>Save open banking</Button>
           </div>
         </form>
       </CardContent>

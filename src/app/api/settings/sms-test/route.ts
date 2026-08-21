@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePlatformAdmin } from '@/lib/auth'
+import { UK_MOBILE_SMS_MESSAGE } from '@/lib/phone'
 import { sendMembershipSms } from '@/lib/sms'
 import { requireTenant } from '@/lib/tenancy'
 
@@ -22,10 +23,10 @@ export async function POST(request: NextRequest) {
 
     if (!result.ok) {
       const message =
-        result.skipped === 'invalid_phone'
-          ? 'Enter a valid mobile number'
+        result.skipped === 'invalid_phone' || result.skipped === 'not_mobile'
+          ? UK_MOBILE_SMS_MESSAGE
           : result.skipped === 'no_phone'
-            ? 'Enter a mobile number'
+            ? 'Enter a UK mobile number'
             : result.skipped === 'not_configured'
               ? 'Twilio is not configured'
               : result.error || 'SMS was not sent'

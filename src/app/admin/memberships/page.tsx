@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -32,11 +33,12 @@ interface Membership {
   }
 }
 
-export default function MembershipsPage() {
+function MembershipsPageInner() {
+  const searchParams = useSearchParams()
   const [memberships, setMemberships] = useState<Membership[]>([])
   const [loading, setLoading] = useState(true)
-  const [statusFilter, setStatusFilter] = useState('')
-  const [cardTypeFilter, setCardTypeFilter] = useState('')
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || '')
+  const [cardTypeFilter, setCardTypeFilter] = useState(searchParams.get('cardType') || '')
   const [pagination, setPagination] = useState({ page: 1, total: 0, totalPages: 0 })
 
   const fetchMemberships = async (page = 1) => {
@@ -100,7 +102,14 @@ export default function MembershipsPage() {
           <div className="flex flex-wrap gap-4">
             <Select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value
+                setStatusFilter(value)
+                const url = new URL(window.location.href)
+                if (value) url.searchParams.set('status', value)
+                else url.searchParams.delete('status')
+                window.history.replaceState({}, '', url)
+              }}
               options={[
                 { value: '', label: 'All Statuses' },
                 { value: 'ACTIVE', label: 'Active' },
@@ -109,7 +118,7 @@ export default function MembershipsPage() {
                 { value: 'EXPIRED', label: 'Expired' },
                 { value: 'CANCELLED', label: 'Cancelled' }
               ]}
-              className="w-48"
+              className="w-full sm:w-48"
             />
             <Select
               value={cardTypeFilter}
@@ -120,7 +129,7 @@ export default function MembershipsPage() {
                 { value: 'PHYSICAL_CARD', label: 'Physical Card' },
                 { value: 'BOTH', label: 'QR + Physical' }
               ]}
-              className="w-48"
+              className="w-full sm:w-48"
             />
           </div>
         </CardHeader>
@@ -135,8 +144,8 @@ export default function MembershipsPage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <table className="w-full min-w-[56rem]">
                   <thead>
                     <tr className="border-b border-gray-200">
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Card #</th>
@@ -220,7 +229,7 @@ export default function MembershipsPage() {
               </div>
 
               {pagination.totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-4 pt-4 border-t border-gray-200">
                   <p className="text-sm text-gray-500">
                     Showing {memberships.length} of {pagination.total} memberships
                   </p>
@@ -249,5 +258,19 @@ export default function MembershipsPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function MembershipsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      }
+    >
+      <MembershipsPageInner />
+    </Suspense>
   )
 }

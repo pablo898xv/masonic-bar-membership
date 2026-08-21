@@ -9,7 +9,7 @@ const Card = forwardRef<HTMLDivElement, CardProps>(
     return (
       <div
         ref={ref}
-        className={`bg-white rounded-xl shadow-sm border border-gray-200 ${className}`}
+        className={`bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-gray-200 ${className}`}
         {...props}
       >
         {children}
@@ -25,7 +25,7 @@ const CardHeader = forwardRef<HTMLDivElement, CardProps>(
     return (
       <div
         ref={ref}
-        className={`px-6 py-4 border-b border-gray-200 ${className}`}
+        className={`px-4 sm:px-6 py-4 border-b border-gray-200 ${className}`}
         {...props}
       >
         {children}
@@ -41,7 +41,7 @@ const CardContent = forwardRef<HTMLDivElement, CardProps>(
     return (
       <div
         ref={ref}
-        className={`px-6 py-4 ${className}`}
+        className={`px-4 sm:px-6 py-4 ${className}`}
         {...props}
       >
         {children}
@@ -57,7 +57,7 @@ const CardFooter = forwardRef<HTMLDivElement, CardProps>(
     return (
       <div
         ref={ref}
-        className={`px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl ${className}`}
+        className={`px-4 sm:px-6 py-4 border-t border-gray-200 bg-gray-50 dark:bg-slate-800/80 rounded-b-xl ${className}`}
         {...props}
       >
         {children}

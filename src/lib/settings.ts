@@ -1,4 +1,6 @@
 import { systemConfigCollection, tenantsCollection } from './db'
+import { formatMagstripeTrackList, normalizeMagstripeTracks } from './msrx6/protocol'
+import { maskAccountNumber, maskSortCode } from './bank-account'
 
 export const APP_SETTINGS_KEY = 'appSettings'
 
@@ -9,6 +11,8 @@ export const SECRET_SETTING_KEYS = [
   'passCertificatePassword',
   'googleWalletServiceAccountJson',
   'twilioAuthToken',
+  'stripeSecretKey',
+  'stripeWebhookSecret',
 ] as const
 
 export type SecretSettingKey = (typeof SECRET_SETTING_KEYS)[number]
@@ -18,6 +22,9 @@ export type AppSettings = {
   hopeMacyAppId: string
   hopeMacyAppSecret: string
   hopeMacyMaxAmount: string
+  stripePublishableKey: string
+  stripeSecretKey: string
+  stripeWebhookSecret: string
   bankAccountName: string
   bankSortCode: string
   bankAccountNumber: string
@@ -54,6 +61,9 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
   hopeMacyAppId: '',
   hopeMacyAppSecret: '',
   hopeMacyMaxAmount: '1000',
+  stripePublishableKey: '',
+  stripeSecretKey: '',
+  stripeWebhookSecret: '',
   bankAccountName: 'Ashlar Technologies',
   bankSortCode: '',
   bankAccountNumber: '',
@@ -97,8 +107,11 @@ function envOverrides(): Partial<AppSettings> {
     hopeMacyAppId: process.env.HOPEMACY_APP_ID,
     hopeMacyAppSecret: process.env.HOPEMACY_APP_SECRET,
     hopeMacyMaxAmount: process.env.HOPEMACY_MAX_AMOUNT,
+    stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
+    stripeSecretKey: process.env.STRIPE_SECRET_KEY,
+    stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
     bankAccountName: process.env.BANK_ACCOUNT_NAME,
-    bankSortCode: process.env.BANK_SORT_CODE,
+    bankSortCode: maskSortCode(process.env.BANK_SORT_CODE || ''),
     bankAccountNumber: process.env.BANK_ACCOUNT_NUMBER,
     smtpHost: process.env.SMTP_HOST,
     smtpPort: process.env.SMTP_PORT,
@@ -184,8 +197,28 @@ export async function getMagstripePrefix(tenantId?: string): Promise<string> {
   return DEFAULT_MAGSTRIPE_PREFIX
 }
 
+export async function getMagstripeTracks(tenantId?: string) {
+  if (tenantId) {
+    const tenant = await tenantsCollection.findById(tenantId)
+    if (tenant?.magstripeTracks?.length) return normalizeMagstripeTracks(tenant.magstripeTracks)
+  }
+  return normalizeMagstripeTracks()
+}
+
 export async function formatMagstripeData(cardNumber: number, tenantId?: string): Promise<string> {
   return `${await getMagstripePrefix(tenantId)}${cardNumber}`
+}
+
+export function magstripeEncodingCopy(prefix: string, tracks?: unknown) {
+  const selected = normalizeMagstripeTracks(tracks)
+  const label = formatMagstripeTrackList(selected)
+  return {
+    prefix,
+    tracks: selected,
+    format: `${prefix}{CARD_NUMBER} written to ${label}`,
+    example: `${prefix}1500`,
+    note: `Encode ${label} exactly as shown. The number printed on the back of the physical card must match.`,
+  }
 }
 
 export async function updateAppSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
@@ -195,6 +228,16 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Ap
   for (const key of SETTING_KEYS) {
     if (!(key in patch) || patch[key] === undefined) continue
     if (SECRET_SET.has(key) && !patch[key]) continue
+    if (key === 'bankSortCode') {
+      next[key] = maskSortCode(String(patch[key] || ''))
+      continue
+    }
+    if (key === 'bankAccountNumber') {
+      const digits = maskAccountNumber(String(patch[key] || ''))
+      if (!digits) continue
+      next[key] = digits
+      continue
+    }
     next[key] = patch[key]
   }
 
@@ -206,6 +249,7 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Ap
 export function toPublicSettings(settings: AppSettings, platformAdmin = false) {
   const shared = {
     hopeMacyConfigured: Boolean(settings.hopeMacyAppId && settings.hopeMacyAppSecret),
+    stripeConfigured: Boolean(settings.stripeSecretKey),
     emailConfigured: Boolean(settings.smtpHost),
     walletConfigured: Boolean(
       settings.passTypeIdentifier &&
@@ -229,8 +273,11 @@ export function toPublicSettings(settings: AppSettings, platformAdmin = false) {
     hopeMacyAppId: settings.hopeMacyAppId,
     hopeMacyAppSecretSet: Boolean(settings.hopeMacyAppSecret),
     hopeMacyMaxAmount: settings.hopeMacyMaxAmount,
+    stripePublishableKey: settings.stripePublishableKey,
+    stripeSecretKeySet: Boolean(settings.stripeSecretKey),
+    stripeWebhookSecretSet: Boolean(settings.stripeWebhookSecret),
     bankAccountName: settings.bankAccountName,
-    bankSortCode: settings.bankSortCode,
+    bankSortCode: maskSortCode(settings.bankSortCode),
     bankAccountNumberSet: Boolean(settings.bankAccountNumber),
     smtpHost: settings.smtpHost,
     smtpPort: settings.smtpPort,

@@ -11,6 +11,7 @@ import {
 import { getAppSettings } from '@/lib/settings'
 import { findPackage, packIsRevocable, parseSmsCreditCost, roundCredits } from '@/lib/credits'
 import { voidPaymentOrder } from '@/lib/hopemacy'
+import { publicUrlIsHttps } from '@/lib/public-url'
 
 export const TENANT_COOKIE = 'mbm_tenant'
 export const TENANT_SLUG_COOKIE = 'mbm_tenant_slug'
@@ -25,7 +26,28 @@ const ORPHAN_COLLECTIONS = [
   'paymentTransactions',
 ]
 
-const TENANT_DATA_COLLECTIONS = [...ORPHAN_COLLECTIONS, 'tenantUsers', 'creditLedger']
+const TENANT_DATA_COLLECTIONS = [...ORPHAN_COLLECTIONS, 'tenantUsers', 'creditLedger', 'tenantApiKeys', 'signupCampaigns']
+
+export const RESERVED_URL_STUBS = new Set([
+  'admin',
+  'api',
+  'assets',
+  'c',
+  'j',
+  'join',
+  'q',
+  'favicon.ico',
+  'login',
+  'logout',
+  'membership',
+  'memberships',
+  'platform',
+  'robots.txt',
+  'settings',
+  'sitemap.xml',
+  'static',
+  't',
+])
 
 export function slugify(value: string) {
   return value
@@ -33,6 +55,26 @@ export function slugify(value: string) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 48) || 'tenant'
+}
+
+export function isReservedUrlStub(value: string) {
+  return RESERVED_URL_STUBS.has(value)
+}
+
+async function publicStubTaken(stub: string, exceptId?: string) {
+  const tenants = await tenantsCollection.findMany()
+  return tenants.some(
+    (tenant) => tenant.id !== exceptId && (tenant.slug === stub || tenant.urlStub === stub)
+  )
+}
+
+export async function findTenantByPublicStub(stub: string) {
+  const normalized = slugify(stub)
+  if (!normalized || isReservedUrlStub(normalized)) return null
+  return (
+    (await tenantsCollection.findByUrlStub(normalized)) ||
+    (await tenantsCollection.findBySlug(normalized))
+  )
 }
 
 async function tagOrphans(tenantId: string) {
@@ -144,10 +186,7 @@ export async function resolveTenant(request: NextRequest): Promise<Tenant | null
 }
 
 function cookieSecure() {
-  return (
-    process.env.NODE_ENV === 'production' ||
-    (process.env.NEXT_PUBLIC_BASE_URL || '').startsWith('https://')
-  )
+  return process.env.NODE_ENV === 'production' || publicUrlIsHttps()
 }
 
 export function tenantCookie(response: NextResponse, tenant: Tenant) {
@@ -357,7 +396,7 @@ export async function fulfillCreditPurchase(transaction: {
     transaction.tenantId,
     pack.credits,
     'TOPUP',
-    `Purchased ${pack.name} by open banking`,
+    `Purchased ${pack.name}`,
     undefined,
     {
       packageKey: pack.key,
@@ -500,6 +539,7 @@ export function serializeVenue(tenant: Tenant) {
     id: tenant.id,
     name: tenant.name,
     slug: tenant.slug,
+    urlStub: tenant.urlStub || '',
     status: tenant.status,
     creditBalance: tenant.creditBalance,
     paymentMode: tenant.paymentMode,
@@ -521,6 +561,7 @@ export function serializeVenue(tenant: Tenant) {
     contactEmail: tenant.contactEmail || '',
     contactPhone: tenant.contactPhone || '',
     publicPath: `/t/${tenant.slug}/membership/register`,
+    shortPath: '',
   }
 }
 
@@ -547,12 +588,29 @@ export async function applyVenueIdentity(body: Record<string, unknown>, current:
 
   if (typeof body.slug === 'string' && body.slug.trim()) {
     const slug = slugify(body.slug)
+    if (isReservedUrlStub(slug)) {
+      return { error: 'That public URL is reserved', status: 400 as const, patch: null }
+    }
     if (slug !== current.slug) {
-      const taken = await tenantsCollection.findBySlug(slug)
-      if (taken && taken.id !== current.id) {
+      if (await publicStubTaken(slug, current.id)) {
         return { error: 'That public URL is already in use', status: 409 as const, patch: null }
       }
       patch.slug = slug
+    }
+  }
+
+  if (typeof body.urlStub === 'string') {
+    const urlStub = slugify(body.urlStub)
+    if (!body.urlStub.trim() || urlStub === (patch.slug || current.slug)) {
+      patch.urlStub = ''
+    } else {
+      if (isReservedUrlStub(urlStub)) {
+        return { error: 'That short URL is reserved', status: 400 as const, patch: null }
+      }
+      if (await publicStubTaken(urlStub, current.id)) {
+        return { error: 'That short URL is already in use', status: 409 as const, patch: null }
+      }
+      patch.urlStub = urlStub
     }
   }
 

@@ -7,11 +7,30 @@ import { format } from 'date-fns'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Select } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { DeleteMembershipButton } from '@/components/admin/delete-membership-button'
 import { Modal } from '@/components/ui/modal'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
 import { isMsrx6Cancelled } from '@/lib/msrx6/device'
 import { cardTypeLabel, hasDigitalCard, hasPhysicalCard } from '@/lib/card-type'
+import { isManualPaymentMethod, paymentMethodLabel } from '@/lib/payment-methods'
+import { formatGbp } from '@/lib/money'
+import { type PaymentOptionsView } from '@/components/payment-method-picker'
+
+interface MembershipPayment {
+  method?: string | null
+  methodLabel?: string
+  provider?: string | null
+  providerLabel?: string
+  status?: string | null
+  amount?: number | null
+  currency?: string
+  reference?: string | null
+  note?: string | null
+  recordedBy?: string | null
+  paidAt?: string | null
+}
 
 interface MembershipDetail {
   id: string
@@ -19,6 +38,13 @@ interface MembershipDetail {
   status: string
   paymentMethod?: string
   paymentStatus?: string
+  payment?: MembershipPayment | null
+  pendingPayment?: {
+    id: string
+    paymentMethod: string
+    status: string
+    amount: number
+  } | null
   startDate?: string
   expiryDate?: string
   tillSystemEnabled: boolean
@@ -63,6 +89,20 @@ function formatDate(value?: string) {
   return format(new Date(value), 'dd MMM yyyy')
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return '—'
+  return format(new Date(value), 'dd MMM yyyy HH:mm')
+}
+
+function paymentStatusLabel(status?: string | null) {
+  if (status === 'COMPLETED') return 'Paid'
+  if (status === 'PROCESSING') return 'Processing'
+  if (status === 'PENDING') return 'Awaiting payment'
+  if (status === 'FAILED') return 'Failed'
+  if (status === 'REFUNDED') return 'Refunded'
+  return status || '—'
+}
+
 export default function MembershipDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
@@ -71,6 +111,14 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   const [error, setError] = useState('')
   const [tillLoading, setTillLoading] = useState(false)
   const [payLoading, setPayLoading] = useState(false)
+  const [paymentMethodDraft, setPaymentMethodDraft] = useState('OPEN_BANKING')
+  const [payments, setPayments] = useState<PaymentOptionsView>({
+    openBanking: true,
+    card: [],
+    defaultMethod: 'OPEN_BANKING',
+    cardLabel: 'Card',
+  })
+  const [paymentNote, setPaymentNote] = useState('')
   const [encodeOpen, setEncodeOpen] = useState(false)
   const [encodeLoading, setEncodeLoading] = useState(false)
   const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
@@ -87,11 +135,18 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
         fetch('/api/tenants/current'),
       ])
       if (!res.ok) throw new Error('Membership not found')
-      setMembership(await res.json())
+      const data = await res.json()
+      setMembership(data)
+      if (typeof data.paymentMethod === 'string') {
+        setPaymentMethodDraft(data.paymentMethod)
+      }
       const tenantData = await tenantRes.json()
       setCreditBalance(
         typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
       )
+      if (tenantData.tenant?.payments) {
+        setPayments(tenantData.tenant.payments)
+      }
       setError('')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load membership')
@@ -110,11 +165,21 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
     setPayLoading(true)
     setError('')
     try {
+      if (paymentMethodDraft !== membership.paymentMethod) {
+        const saved = await fetch(`/api/memberships/${membership.id}/payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_method', paymentMethod: paymentMethodDraft }),
+        })
+        const savedData = await saved.json().catch(() => ({}))
+        if (!saved.ok) throw new Error(savedData.error || 'Failed to update payment method')
+      }
       const res = await fetch('/api/payments/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           membershipId: membership.id,
+          paymentMethod: paymentMethodDraft,
           returnUrl: `${window.location.origin}/admin/memberships/${membership.id}`,
         }),
       })
@@ -125,6 +190,55 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
       window.location.href = checkoutUrl
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start payment')
+      setPayLoading(false)
+    }
+  }
+
+  const handleSavePaymentMethod = async () => {
+    if (!membership) return
+    setPayLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/memberships/${membership.id}/payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_method', paymentMethod: paymentMethodDraft }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Failed to update payment method')
+      await fetchMembership()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update payment method')
+    } finally {
+      setPayLoading(false)
+    }
+  }
+
+  const handleMarkPaid = async () => {
+    if (!membership) return
+    setPayLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/memberships/${membership.id}/payment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'mark_paid',
+          paymentMethod: isManualPaymentMethod(paymentMethodDraft)
+            ? paymentMethodDraft
+            : paymentMethodDraft === 'COMPLIMENTARY'
+              ? 'COMPLIMENTARY'
+              : 'IN_PERSON',
+          note: paymentNote,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Failed to mark payment as paid')
+      setPaymentNote('')
+      await fetchMembership()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to mark payment as paid')
+    } finally {
       setPayLoading(false)
     }
   }
@@ -293,16 +407,16 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">
             Card #{membership.membershipNumber.cardNumber}
           </h1>
           <p className="text-gray-500 mt-1">{membership.member.name}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link href="/admin/memberships">
-            <Button variant="secondary">Back</Button>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Link href="/admin/memberships" className="w-full sm:w-auto">
+            <Button variant="secondary" className="w-full">Back</Button>
           </Link>
           <DeleteMembershipButton
             membershipId={membership.id}
@@ -338,18 +452,108 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
                 {cardTypeLabel(membership.cardType)}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Payment</span>
-              <span className="font-medium text-gray-900">
-                {membership.paymentMethod || '—'}
-                {membership.paymentStatus ? ` · ${membership.paymentStatus}` : ''}
+            <div className="flex justify-between gap-4">
+              <span className="text-gray-500 shrink-0">Paid with</span>
+              <span className="font-medium text-gray-900 text-right">
+                {membership.payment?.methodLabel || paymentMethodLabel(membership.paymentMethod)}
+                {membership.payment?.providerLabel && membership.payment.providerLabel !== '—'
+                  ? ` · ${membership.payment.providerLabel}`
+                  : ''}
               </span>
             </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-gray-500 shrink-0">Payment status</span>
+              <span className="font-medium text-gray-900 text-right">
+                {paymentStatusLabel(membership.payment?.status || membership.paymentStatus)}
+              </span>
+            </div>
+            {membership.payment?.amount != null && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500 shrink-0">Amount</span>
+                <span className="font-medium text-gray-900">
+                  {formatGbp(membership.payment.amount, membership.payment.currency)}
+                </span>
+              </div>
+            )}
+            {membership.payment?.reference && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500 shrink-0">Processor reference</span>
+                <span className="font-mono text-xs text-gray-900 text-right break-all">
+                  {membership.payment.reference}
+                </span>
+              </div>
+            )}
+            {membership.payment?.paidAt && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500 shrink-0">Paid at</span>
+                <span className="font-medium text-gray-900">{formatDateTime(membership.payment.paidAt)}</span>
+              </div>
+            )}
+            {membership.payment?.recordedBy && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500 shrink-0">Recorded by</span>
+                <span className="font-medium text-gray-900">{membership.payment.recordedBy}</span>
+              </div>
+            )}
+            {membership.payment?.note && (
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500 shrink-0">Note</span>
+                <span className="font-medium text-gray-900 text-right">{membership.payment.note}</span>
+              </div>
+            )}
             {membership.status === 'PENDING_PAYMENT' && (
-              <div className="pt-2">
-                <Button size="sm" onClick={handleCompletePayment} loading={payLoading}>
-                  Complete purchase
-                </Button>
+              <div className="pt-3 space-y-3 border-t border-gray-200">
+                <p className="text-sm text-gray-600">
+                  Cards and QR codes stay blocked until this is paid. Change the method, take online payment, record cash / in person, or issue as complimentary.
+                </p>
+                <Select
+                  label="Payment method"
+                  value={paymentMethodDraft}
+                  onChange={(event) => setPaymentMethodDraft(event.target.value)}
+                  options={[
+                    ...(payments.openBanking || paymentMethodDraft === 'OPEN_BANKING'
+                      ? [
+                          {
+                            value: 'OPEN_BANKING',
+                            label: payments.openBanking ? 'Open banking' : 'Open banking (disabled)',
+                          },
+                        ]
+                      : []),
+                    ...(payments.card.length || paymentMethodDraft === 'CARD'
+                      ? [{ value: 'CARD', label: payments.cardLabel || 'Card' }]
+                      : []),
+                    { value: 'CASH', label: 'Cash' },
+                    { value: 'IN_PERSON', label: 'In person' },
+                    { value: 'COMPLIMENTARY', label: 'Complimentary (no charge)' },
+                  ]}
+                />
+                <Input
+                  label="Note (optional)"
+                  value={paymentNote}
+                  onChange={(event) => setPaymentNote(event.target.value)}
+                  placeholder="Taken at the bar, receipt number…"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" onClick={handleSavePaymentMethod} loading={payLoading}>
+                    Save method
+                  </Button>
+                  {((paymentMethodDraft === 'OPEN_BANKING' && payments.openBanking) ||
+                    (paymentMethodDraft === 'CARD' && payments.card.length > 0)) && (
+                    <Button size="sm" onClick={handleCompletePayment} loading={payLoading}>
+                      Take payment
+                    </Button>
+                  )}
+                  {isManualPaymentMethod(paymentMethodDraft) && (
+                    <Button size="sm" onClick={handleMarkPaid} loading={payLoading}>
+                      Mark paid
+                    </Button>
+                  )}
+                  {paymentMethodDraft === 'COMPLIMENTARY' && (
+                    <Button size="sm" onClick={handleMarkPaid} loading={payLoading}>
+                      Issue complimentary
+                    </Button>
+                  )}
+                </div>
               </div>
             )}
             <div className="flex justify-between">
@@ -365,7 +569,15 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
 
         <Card>
           <CardHeader>
-            <h2 className="text-lg font-semibold text-gray-900">Member</h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">Member</h2>
+              <Link
+                href={`/admin/members/${membership.member.id}?edit=1`}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Edit details
+              </Link>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
             <div className="flex justify-between">
@@ -374,13 +586,13 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
                 {membership.member.name}
               </Link>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Email</span>
-              <span className="font-medium text-gray-900">{membership.member.email}</span>
+            <div className="flex justify-between gap-3">
+              <span className="text-gray-500 shrink-0">Email</span>
+              <span className="font-medium text-gray-900 text-right break-all min-w-0">{membership.member.email}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Phone</span>
-              <span className="font-medium text-gray-900">{membership.member.phone}</span>
+            <div className="flex justify-between gap-3">
+              <span className="text-gray-500 shrink-0">Phone</span>
+              <span className="font-medium text-gray-900 text-right break-all min-w-0">{membership.member.phone}</span>
             </div>
           </CardContent>
         </Card>
@@ -410,7 +622,7 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
 
           {magstripeData && (
             <div className="p-3 bg-gray-50 rounded-lg">
-              <p className="text-xs text-gray-500">Magstripe Track 2</p>
+              <p className="text-xs text-gray-500">Magstripe</p>
               <p className="font-mono font-medium text-gray-900">{magstripeData}</p>
             </div>
           )}
@@ -513,7 +725,7 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
       >
         <div className="space-y-4">
           <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
-            <p className="text-sm text-yellow-700">Track 2 data (till swipe):</p>
+            <p className="text-sm text-yellow-700">Magstripe data (till swipe):</p>
             <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">{magstripeData}</p>
           </div>
           <p className="text-sm text-gray-600">

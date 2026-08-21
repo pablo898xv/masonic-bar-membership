@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken'
 import { NextRequest, NextResponse } from 'next/server'
+import { publicUrlIsHttps } from '@/lib/public-url'
 
 export const AUTH_COOKIE = 'mbm_admin'
 export const AUTH_MAX_AGE = 60 * 60 * 24
@@ -9,6 +10,8 @@ export interface JWTPayload {
   userId: string
   email: string
   role: string
+  purpose?: 'session' | '2fa'
+  pwdv?: number
 }
 
 export function jwtSecret() {
@@ -19,8 +22,8 @@ export function jwtSecret() {
   return secret || DEV_FALLBACK_SECRET
 }
 
-export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, jwtSecret(), { expiresIn: '24h' })
+export function generateToken(payload: JWTPayload, expiresIn: jwt.SignOptions['expiresIn'] = '24h'): string {
+  return jwt.sign(payload, jwtSecret(), { expiresIn })
 }
 
 export function verifyToken(token: string): JWTPayload | null {
@@ -39,13 +42,13 @@ export function tokenFromRequest(request: NextRequest): string | null {
 
 export function hasValidSession(request: NextRequest) {
   const token = tokenFromRequest(request)
-  return Boolean(token && verifyToken(token))
+  const payload = token ? verifyToken(token) : null
+  return Boolean(payload && payload.purpose !== '2fa')
 }
 
 export function authCookie(response: NextResponse, token: string) {
   const https =
-    process.env.NODE_ENV === 'production' ||
-    (process.env.NEXT_PUBLIC_BASE_URL || '').startsWith('https://')
+    process.env.NODE_ENV === 'production' || publicUrlIsHttps()
   response.cookies.set(AUTH_COOKIE, token, {
     path: '/',
     sameSite: 'lax',
@@ -58,8 +61,7 @@ export function authCookie(response: NextResponse, token: string) {
 
 export function clearAuthCookie(response: NextResponse) {
   const https =
-    process.env.NODE_ENV === 'production' ||
-    (process.env.NEXT_PUBLIC_BASE_URL || '').startsWith('https://')
+    process.env.NODE_ENV === 'production' || publicUrlIsHttps()
   response.cookies.set(AUTH_COOKIE, '', {
     path: '/',
     maxAge: 0,

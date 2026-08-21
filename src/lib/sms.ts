@@ -1,5 +1,5 @@
 import { parseSmsCreditCost } from '@/lib/credits'
-import { InvalidPhoneError, toE164 } from '@/lib/phone'
+import { InvalidPhoneError, toUkMobileE164 } from '@/lib/phone'
 import { AppSettings, getAppSettings } from '@/lib/settings'
 import { assertCreditsAvailable, consumeSmsCredit } from '@/lib/tenancy'
 
@@ -101,14 +101,15 @@ export async function sendMembershipSms(options: {
 
   let to: string | null
   try {
-    to = toE164(options.to)
+    to = toUkMobileE164(options.to)
   } catch (error) {
     if (error instanceof InvalidPhoneError) {
       return { ok: false as const, skipped: 'invalid_phone' as const }
     }
     throw error
   }
-  if (!to) return { ok: false as const, skipped: 'no_phone' as const }
+  if (!options.to?.trim()) return { ok: false as const, skipped: 'no_phone' as const }
+  if (!to) return { ok: false as const, skipped: 'not_mobile' as const }
 
   const template =
     options.body ||

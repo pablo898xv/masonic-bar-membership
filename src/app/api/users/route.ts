@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminUsersCollection, tenantUsersCollection } from '@/lib/db'
+import { publicAdminUser } from '@/lib/admin-user'
 import { hashPassword, requireAdmin } from '@/lib/auth'
 import { requireTenant } from '@/lib/tenancy'
 
@@ -14,8 +15,7 @@ export async function GET(request: NextRequest) {
       links.map(async (link) => {
         const user = await adminUsersCollection.findById(link.userId)
         if (!user) return null
-        const { passwordHash: _, ...safe } = user
-        return { ...safe, tenantRole: link.role, tenantUserId: link.id }
+        return { ...publicAdminUser(user), tenantRole: link.role, tenantUserId: link.id }
       })
     )
     return NextResponse.json({ users: users.filter(Boolean) })
@@ -63,8 +63,7 @@ export async function POST(request: NextRequest) {
     }
 
     await tenantUsersCollection.create({ tenantId: tenant.id, userId: user.id, role })
-    const { passwordHash: _, ...safe } = user
-    return NextResponse.json({ ...safe, tenantRole: role }, { status: 201 })
+    return NextResponse.json({ ...publicAdminUser(user), tenantRole: role }, { status: 201 })
   } catch (error) {
     console.error('Error adding user:', error)
     return NextResponse.json({ error: 'Failed to add user' }, { status: 500 })

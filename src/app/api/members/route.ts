@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { membersCollection, membershipsCollection, membershipNumbersCollection, subscriptionPlansCollection } from '@/lib/db'
 import { memberSchema } from '@/lib/validation'
 import { requireTenant } from '@/lib/tenancy'
-import { requireAdmin } from '@/lib/auth'
+import { getAuthenticatedUser, requireAdmin } from '@/lib/auth'
+import { findSignupIdentity, signupIdentityBlock } from '@/lib/member-card-limit'
+import { requirePublicSignupCampaign } from '@/lib/signup-campaigns'
 
 export async function GET(request: NextRequest) {
   try {
@@ -80,17 +82,47 @@ export async function POST(request: NextRequest) {
     }
     
     const { name, email, phone } = validation.data
-    
-    const existingMember = await membersCollection.findByEmail(email, tenant.id)
-    
-    if (existingMember) {
-      return NextResponse.json(
-        { error: 'A member with this email already exists' },
-        { status: 409 }
-      )
+    const adminUser = await getAuthenticatedUser(request)
+    let signupCampaignId: string | undefined
+
+    if (!adminUser) {
+      const { campaign, error: campaignError } = await requirePublicSignupCampaign(request, tenant.id)
+      if (campaignError) return campaignError
+      signupCampaignId = campaign?.id
     }
-    
-    const member = await membersCollection.create({ tenantId: tenant.id, name, email, phone })
+
+    if (adminUser) {
+      const identity = await findSignupIdentity(tenant.id, email, phone)
+      if (identity.conflict) {
+        return NextResponse.json(
+          { error: 'That email and phone belong to two different members.' },
+          { status: 409 }
+        )
+      }
+      if (identity.member) {
+        return NextResponse.json(
+          { error: 'A member with this email or phone number already exists' },
+          { status: 409 }
+        )
+      }
+    } else {
+      const block = await signupIdentityBlock(tenant.id, email, phone, 'public')
+      if (block) {
+        return NextResponse.json(block, { status: 409 })
+      }
+      const existing = await findSignupIdentity(tenant.id, email, phone)
+      if (existing.member) {
+        return NextResponse.json(existing.member, { status: 200 })
+      }
+    }
+
+    const member = await membersCollection.create({
+      tenantId: tenant.id,
+      name,
+      email,
+      phone,
+      ...(signupCampaignId ? { signupCampaignId } : {}),
+    })
     
     return NextResponse.json(member, { status: 201 })
   } catch (error) {

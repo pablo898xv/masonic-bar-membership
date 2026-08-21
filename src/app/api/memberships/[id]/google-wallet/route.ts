@@ -7,6 +7,7 @@ import {
 } from '@/lib/db'
 import { hasDigitalCard } from '@/lib/card-type'
 import { createGoogleWalletSaveUrl, isGoogleWalletConfigured } from '@/lib/google-wallet'
+import { publicOrigin } from '@/lib/public-url'
 
 export async function GET(
   request: NextRequest,
@@ -43,7 +44,7 @@ export async function GET(
       cardNumber: membershipNumber.cardNumber,
       planName: subscriptionPlan.name,
       expiryDate: membership.expiryDate,
-      origins: [request.nextUrl.origin],
+      origins: [publicOrigin(request)],
       tenantId: membership.tenantId,
     })
 

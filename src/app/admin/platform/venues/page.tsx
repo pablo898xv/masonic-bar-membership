@@ -220,43 +220,48 @@ export default function TenantsPage() {
 
       <Card>
         <CardContent className="pt-6">
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <table className="w-full min-w-[48rem] text-sm">
             <thead>
               <tr className="text-left text-gray-500 border-b">
-                <th className="py-2">Venue</th>
-                <th>Public signup</th>
-                <th>Credits</th>
-                <th>Payments</th>
-                <th></th>
+                <th className="py-2 pr-4 align-bottom">Venue</th>
+                <th className="py-2 pr-4 align-bottom">Online signup</th>
+                <th className="py-2 pr-4 align-bottom">Credits</th>
+                <th className="py-2 pr-4 align-bottom">Payments</th>
+                <th className="py-2 align-bottom"></th>
               </tr>
             </thead>
             <tbody>
               {tenants.map((tenant) => (
                 <tr key={tenant.id} className="border-b border-gray-100">
-                  <td className="py-3">
+                  <td className="py-3 pr-4 align-top">
                     <div className="flex items-start gap-3">
-                      {tenant.logoUrl ? (
-                        <img src={tenant.logoUrl} alt="" className="h-12 w-auto max-w-[8rem] object-contain" />
-                      ) : (
-                        <div className="h-10 w-10 rounded border border-dashed border-gray-200" />
-                      )}
-                      <div>
+                      <div className="flex h-12 w-32 shrink-0 items-center justify-start">
+                        {tenant.logoUrl ? (
+                          <img src={tenant.logoUrl} alt="" className="max-h-12 max-w-32 object-contain" />
+                        ) : (
+                          <div className="h-10 w-10 rounded border border-dashed border-gray-200" />
+                        )}
+                      </div>
+                      <div className="min-w-0 leading-5">
                         <p className="font-medium text-gray-900">{tenant.name}</p>
                         <p className="text-gray-500">{tenant.slug}</p>
                         {summaryLine(tenant) && (
-                          <p className="text-gray-500 mt-1">{summaryLine(tenant)}</p>
+                          <p className="mt-1 text-gray-500">{summaryLine(tenant)}</p>
                         )}
                       </div>
                     </div>
                   </td>
-                  <td className="font-mono text-xs">/t/{tenant.slug}/membership/register</td>
-                  <td>{tenant.creditBalance}</td>
-                  <td>
+                  <td className="py-3 pr-4 align-top text-gray-500 leading-5">
+                    Campaign links in Venue settings
+                  </td>
+                  <td className="py-3 pr-4 align-top leading-5">{tenant.creditBalance}</td>
+                  <td className="py-3 pr-4 align-top">
                     <Badge variant={tenant.bankAccountSet ? 'info' : 'warning'}>
                       {tenant.bankAccountSet ? 'Payout account set' : 'Payout account needed'}
                     </Badge>
                   </td>
-                  <td className="text-right whitespace-nowrap">
+                  <td className="py-3 text-right align-top whitespace-nowrap">
                     <div className="flex justify-end gap-2">
                       <Button size="sm" variant="secondary" onClick={() => openEdit(tenant)}>
                         Edit
@@ -281,6 +286,7 @@ export default function TenantsPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </CardContent>
       </Card>
 
@@ -290,10 +296,14 @@ export default function TenantsPage() {
             <h3 className="text-sm font-semibold text-gray-900">Venue</h3>
             <Input label="Name" value={form.name} onChange={(event) => setField('name', event.target.value)} required />
             <Input
-              label="Public URL slug"
+              label="Internal slug"
               value={form.slug}
               onChange={(event) => setField('slug', event.target.value)}
             />
+            <p className="text-xs text-gray-500">
+              Used for till QR gateway paths and admin switching. Online self-service signup uses campaign
+              links from Venue settings, not a permanent public URL.
+            </p>
             {editing && (
               <VenueLogoUpload
                 tenantId={editing.id}

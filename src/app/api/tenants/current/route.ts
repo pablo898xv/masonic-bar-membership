@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { mergeCardPayments, serializeCardPayments } from '@/lib/card-processors'
 import { tenantsCollection, Tenant } from '@/lib/db'
 import { isSuperAdmin, requireAdmin } from '@/lib/auth'
+import { publicPaymentOptions } from '@/lib/payment-options'
+import { maskAccountNumber, maskSortCode } from '@/lib/bank-account'
+import { qrCodeModeOf, qrRedirectUrlError } from '@/lib/qr-payload'
+import {
+  formatMagstripeTrackList,
+  magstripePrefixIsNumeric,
+  normalizeMagstripeTracks,
+  parseMagstripeTracks,
+} from '@/lib/msrx6/protocol'
 import {
   ensureUserCanAccessTenant,
   requireTenant,
@@ -12,11 +22,26 @@ import {
 function venuePaymentFields(tenant: Tenant) {
   return {
     bankAccountName: tenant.bankAccountName || '',
-    bankSortCode: tenant.bankSortCode || '',
+    bankSortCode: maskSortCode(tenant.bankSortCode || ''),
     bankAccountNumberSet: Boolean(tenant.bankAccountNumber),
     magstripePrefix: tenant.magstripePrefix || ';9998',
+    magstripeTracks: normalizeMagstripeTracks(tenant.magstripeTracks),
+    qrCodeMode: tenant.qrCodeMode === 'URL' ? 'URL' : 'TILL',
+    qrRedirectUrl: tenant.qrRedirectUrl || '',
     tillSystemApiUrl: tenant.tillSystemApiUrl || '',
     tillSystemApiKeySet: Boolean(tenant.tillSystemApiKey),
+    cardPayments: {
+      defaultProvider: tenant.cardPayments?.defaultProvider || '',
+      processors: serializeCardPayments(tenant.cardPayments),
+    },
+    openBankingEnabled: tenant.openBankingEnabled !== false,
+  }
+}
+
+async function venueAdminFields(tenant: Tenant) {
+  return {
+    ...venuePaymentFields(tenant),
+    payments: await publicPaymentOptions(tenant),
   }
 }
 
@@ -37,7 +62,7 @@ export async function GET(request: NextRequest) {
       const response = NextResponse.json({
         tenant: {
           ...serializeVenue(fallback),
-          ...venuePaymentFields(fallback),
+          ...(await venueAdminFields(fallback)),
         },
       })
       return tenantCookie(response, fallback)
@@ -46,7 +71,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       tenant: {
         ...serializeVenue(tenant),
-        ...venuePaymentFields(tenant),
+        ...(await venueAdminFields(tenant)),
       },
     })
   } catch (error) {
@@ -90,13 +115,42 @@ export async function PUT(request: NextRequest) {
     if (body.name) patch.name = String(body.name)
     if (body.paymentMode === 'OWN' || body.paymentMode === 'PLATFORM') patch.paymentMode = body.paymentMode
     if (typeof body.bankAccountName === 'string') patch.bankAccountName = body.bankAccountName
-    if (typeof body.bankSortCode === 'string') patch.bankSortCode = body.bankSortCode.replace(/\D/g, '')
+    if (typeof body.bankSortCode === 'string') patch.bankSortCode = maskSortCode(body.bankSortCode)
     if (typeof body.bankAccountNumber === 'string' && body.bankAccountNumber) {
-      patch.bankAccountNumber = body.bankAccountNumber.replace(/\D/g, '')
+      patch.bankAccountNumber = maskAccountNumber(body.bankAccountNumber)
     }
     if (typeof body.magstripePrefix === 'string') patch.magstripePrefix = body.magstripePrefix.trim() || ';9998'
+    if (Array.isArray(body.magstripeTracks)) {
+      const tracks = parseMagstripeTracks(body.magstripeTracks)
+      if (!tracks.length) {
+        return NextResponse.json({ error: 'Select at least one magstripe track to encode.' }, { status: 400 })
+      }
+      patch.magstripeTracks = tracks
+    }
+    if (patch.magstripePrefix !== undefined || patch.magstripeTracks !== undefined) {
+      const tracks = normalizeMagstripeTracks(patch.magstripeTracks ?? tenant.magstripeTracks)
+      const prefix = patch.magstripePrefix ?? tenant.magstripePrefix ?? ';9998'
+      if ((tracks.includes(2) || tracks.includes(3)) && !magstripePrefixIsNumeric(prefix)) {
+        return NextResponse.json(
+          {
+            error: `${formatMagstripeTrackList(tracks.filter((track) => track !== 1))} only accept digits. Use a numeric prefix, or encode Track 1 only.`,
+          },
+          { status: 400 }
+        )
+      }
+    }
+    if (body.qrCodeMode === 'TILL' || body.qrCodeMode === 'URL') patch.qrCodeMode = body.qrCodeMode
+    if (typeof body.qrRedirectUrl === 'string') patch.qrRedirectUrl = body.qrRedirectUrl.trim()
+    if (qrCodeModeOf(patch.qrCodeMode || tenant.qrCodeMode) === 'URL') {
+      const urlError = qrRedirectUrlError(patch.qrRedirectUrl ?? tenant.qrRedirectUrl ?? '')
+      if (urlError) return NextResponse.json({ error: urlError }, { status: 400 })
+    }
     if (typeof body.tillSystemApiUrl === 'string') patch.tillSystemApiUrl = body.tillSystemApiUrl.trim()
     if (typeof body.tillSystemApiKey === 'string' && body.tillSystemApiKey) patch.tillSystemApiKey = body.tillSystemApiKey
+    if (body.cardPayments && typeof body.cardPayments === 'object') {
+      patch.cardPayments = mergeCardPayments(tenant.cardPayments, body.cardPayments)
+    }
+    if (typeof body.openBankingEnabled === 'boolean') patch.openBankingEnabled = body.openBankingEnabled
 
     const updated = await tenantsCollection.update(tenant.id, patch)
     return NextResponse.json({

@@ -85,9 +85,13 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
   const genericObjectId = objectId(issuerId, input.membershipId)
   const tenant = input.tenantId ? await tenantsCollection.findById(input.tenantId) : null
   const venueName = tenant?.name?.trim() || 'Membership Manager'
-  const barcodeValue = await formatMembershipQRData(input.cardNumber, input.tenantId)
+  const barcodeValue = await formatMembershipQRData(input.cardNumber, input.tenantId, {
+    membershipId: input.membershipId,
+  })
   const expiryLabel = input.expiryDate ? format(input.expiryDate, 'dd MMM yyyy') : '—'
-  const logoUrl = (tenant ? publicTenantLogoUrl(tenant) : '') || settings.googleWalletLogoUrl.trim()
+  const wordmarkUrl =
+    (tenant ? publicTenantLogoUrl(tenant, 'logo') : '') || settings.googleWalletLogoUrl.trim()
+  const iconUrl = (tenant ? publicTenantLogoUrl(tenant, 'icon') : '') || wordmarkUrl
 
   const genericClass = {
     id: genericClassId,
@@ -138,8 +142,11 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
     ],
   }
 
-  if (logoUrl) {
-    genericObject.logo = { sourceUri: { uri: logoUrl } }
+  if (wordmarkUrl) {
+    genericObject.wideLogo = { sourceUri: { uri: wordmarkUrl } }
+  }
+  if (iconUrl) {
+    genericObject.logo = { sourceUri: { uri: iconUrl } }
   }
 
   if (input.expiryDate) {

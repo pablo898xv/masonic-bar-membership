@@ -45,6 +45,10 @@ if [ ! -f .env.local ]; then
   echo "==> Creating .env.local from .env.local.example"
   cp .env.local.example .env.local
 fi
+if ! grep -q '^MEMBER_PII_KEY=' .env.local; then
+  echo "==> Generating MEMBER_PII_KEY"
+  printf '\nMEMBER_PII_KEY=%s\n' "$(openssl rand -hex 32)" >> .env.local
+fi
 
 if [ ! -d node_modules ] && [ "$HOSTING" -eq 0 ]; then
   echo "==> npm install"

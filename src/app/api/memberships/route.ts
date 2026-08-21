@@ -10,11 +10,17 @@ import {
 } from '@/lib/db'
 import { membershipPurchaseSchema } from '@/lib/validation'
 import { fulfillPaidMembership } from '@/lib/fulfill-membership'
+import { ensurePendingMembershipPayment } from '@/lib/membership-payment'
+import { isManualPaymentMethod, isOnlinePaymentMethod, ADMIN_ONLY_ISSUE_MESSAGE } from '@/lib/payment-methods'
 import { formatMagstripeData } from '@/lib/settings'
 import { v4 as uuidv4 } from 'uuid'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, getAuthenticatedUser } from '@/lib/auth'
 import { assertCreditsAvailable, creditsNeeded, requireTenant } from '@/lib/tenancy'
 import { allocateCardShortCode } from '@/lib/card-link'
+import { onlinePaymentMethodError, publicPaymentOptions } from '@/lib/payment-options'
+import { memberCardBlock } from '@/lib/member-card-limit'
+import { isZeroPrice } from '@/lib/money'
+import { requirePublicSignupCampaign } from '@/lib/signup-campaigns'
 
 async function nextCardNumber(tenantId: string) {
   const existing = await membershipNumbersCollection.findFirstAvailable(tenantId)
@@ -96,18 +102,16 @@ export async function POST(request: NextRequest) {
     }
     
     const { memberId, subscriptionPlanId, cardType, paymentMethod, adminIssued } = validation.data
+    const staffUser = await getAuthenticatedUser(request)
+    const staffIssue = Boolean(staffUser) && adminIssued === true
+    let signupCampaignId: string | undefined
 
-    if (paymentMethod === 'COMPLIMENTARY') {
-      const { error: authError } = await requireAdmin(request)
-      if (authError) return authError
-      if (adminIssued !== true) {
-        return NextResponse.json(
-          { error: 'Complimentary memberships can only be issued by an admin' },
-          { status: 403 }
-        )
-      }
+    if (!staffIssue) {
+      const { campaign, error: campaignError } = await requirePublicSignupCampaign(request, tenant.id)
+      if (campaignError) return campaignError
+      signupCampaignId = campaign?.id
     }
-    
+
     const [member, subscriptionPlan] = await Promise.all([
       membersCollection.findById(memberId),
       subscriptionPlansCollection.findById(subscriptionPlanId),
@@ -123,6 +127,31 @@ export async function POST(request: NextRequest) {
 
     if (member.tenantId !== tenant.id || subscriptionPlan.tenantId !== tenant.id) {
       return NextResponse.json({ error: 'Member or plan does not belong to this venue' }, { status: 403 })
+    }
+
+    const staffOnlyIssue =
+      paymentMethod === 'COMPLIMENTARY' ||
+      isManualPaymentMethod(paymentMethod) ||
+      isZeroPrice(subscriptionPlan.price)
+
+    if (staffOnlyIssue) {
+      const { error: authError } = await requireAdmin(request)
+      if (authError) {
+        return NextResponse.json({ error: ADMIN_ONLY_ISSUE_MESSAGE }, { status: 403 })
+      }
+      if (adminIssued !== true) {
+        return NextResponse.json({ error: ADMIN_ONLY_ISSUE_MESSAGE }, { status: 403 })
+      }
+    } else {
+      const methodError = onlinePaymentMethodError(paymentMethod, await publicPaymentOptions(tenant))
+      if (methodError) {
+        return NextResponse.json({ error: methodError }, { status: 400 })
+      }
+    }
+
+    const cardBlock = await memberCardBlock(member.id, tenant.id, adminIssued ? 'admin' : 'public')
+    if (cardBlock) {
+      return NextResponse.json(cardBlock, { status: 409 })
     }
 
     const needed = creditsNeeded(cardType)
@@ -146,18 +175,26 @@ export async function POST(request: NextRequest) {
     })
     
     const isComplimentary = paymentMethod === 'COMPLIMENTARY'
+    const freePlan = isZeroPrice(subscriptionPlan.price)
+    const freeIssue = isComplimentary || freePlan
+    const collectedNow = freeIssue || isManualPaymentMethod(paymentMethod)
+    const recordedMethod =
+      isComplimentary || (freePlan && isOnlinePaymentMethod(paymentMethod))
+        ? 'COMPLIMENTARY'
+        : paymentMethod
     const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
       tenantId: tenant.id,
       memberId,
       membershipNumberId: availableNumber.id,
       subscriptionPlanId,
       cardType: cardType as 'QR_CODE' | 'PHYSICAL_CARD',
-      status: isComplimentary ? 'PAID' : 'PENDING_PAYMENT',
-      paymentMethod,
-      paymentStatus: isComplimentary ? 'COMPLETED' : 'PENDING',
+      status: collectedNow ? 'PAID' : 'PENDING_PAYMENT',
+      paymentMethod: recordedMethod,
+      paymentStatus: collectedNow ? 'COMPLETED' : 'PENDING',
       tillSystemEnabled: false,
       accessToken: uuidv4(),
       shortCode: await allocateCardShortCode(),
+      ...(signupCampaignId ? { signupCampaignId } : {}),
     }
     
     const membership = await membershipsCollection.create(membershipData)
@@ -168,21 +205,24 @@ export async function POST(request: NextRequest) {
       await cardIssuancesCollection.create({
         membershipId: membership.id,
         tenantId: tenant.id,
-        queueStatus: isComplimentary ? 'READY_TO_ENCODE' : 'PENDING',
+        queueStatus: collectedNow ? 'READY_TO_ENCODE' : 'PENDING',
         magstripeData,
       })
     }
 
-    if (isComplimentary) {
+    if (freeIssue) {
       await paymentTransactionsCollection.create({
         tenantId: tenant.id,
         membershipId: membership.id,
         amount: 0,
         currency: subscriptionPlan.currency,
-        paymentMethod: 'COMPLIMENTARY',
-        provider: 'COMPLIMENTARY',
+        paymentMethod: recordedMethod,
+        provider: recordedMethod === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : 'MANUAL',
         status: 'COMPLETED',
-        metadata: { issuedBy: 'admin', reason: 'complimentary' },
+        metadata: {
+          issuedBy: adminIssued ? 'admin' : 'self-serve',
+          reason: isComplimentary ? 'complimentary' : 'free_plan',
+        },
       })
 
       await fulfillPaidMembership(membership.id)
@@ -190,10 +230,41 @@ export async function POST(request: NextRequest) {
       const result = await membershipsCollection.findByIdWithRelations(membership.id)
       return NextResponse.json({
         ...result,
-        complimentary: true,
+        complimentary: isComplimentary,
+        freeIssue: true,
         paymentRequired: null,
       }, { status: 201 })
     }
+
+    if (isManualPaymentMethod(paymentMethod)) {
+      await paymentTransactionsCollection.create({
+        tenantId: tenant.id,
+        membershipId: membership.id,
+        amount: subscriptionPlan.price,
+        currency: subscriptionPlan.currency,
+        paymentMethod,
+        provider: 'MANUAL',
+        status: 'COMPLETED',
+        metadata: { issuedBy: 'admin', collectedAtVenue: true },
+      })
+
+      await fulfillPaidMembership(membership.id)
+
+      const result = await membershipsCollection.findByIdWithRelations(membership.id)
+      return NextResponse.json({
+        ...result,
+        collectedInPerson: true,
+        paymentRequired: null,
+      }, { status: 201 })
+    }
+
+    await ensurePendingMembershipPayment({
+      tenantId: tenant.id,
+      membershipId: membership.id,
+      amount: subscriptionPlan.price,
+      currency: subscriptionPlan.currency,
+      paymentMethod,
+    })
     
     const result = await membershipsCollection.findByIdWithRelations(membership.id)
     

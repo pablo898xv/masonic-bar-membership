@@ -7,6 +7,7 @@ import {
 } from '@/lib/db'
 import { cardNumberImportSchema } from '@/lib/validation'
 import { formatMagstripeData, getMagstripePrefix } from '@/lib/settings'
+import { isPaidMembershipStatus } from '@/lib/payment-methods'
 import { requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
@@ -24,6 +25,7 @@ export async function GET(request: NextRequest) {
       tenantId: tenant.id,
       assigned: assigned === 'true' ? true : assigned === 'false' ? false : undefined,
       batchId: batchId || undefined,
+      skip: (Math.max(1, page) - 1) * limit,
       take: limit,
     })
 
@@ -32,7 +34,7 @@ export async function GET(request: NextRequest) {
       numbers.map(async (number) => {
         const magstripeData = await formatMagstripeData(number.cardNumber, tenant.id)
         if (!number.isAssigned) {
-          return { ...number, magstripeData, membership: null, cardIssuance: null }
+          return { ...number, magstripeData, canEncode: true, membership: null, cardIssuance: null }
         }
 
         const linked = await membershipsCollection.findByMembershipNumberId(number.id)
@@ -43,7 +45,7 @@ export async function GET(request: NextRequest) {
           null
 
         if (!membership) {
-          return { ...number, magstripeData, membership: null, cardIssuance: null }
+          return { ...number, magstripeData, canEncode: true, membership: null, cardIssuance: null }
         }
 
         const [member, cardIssuance] = await Promise.all([
@@ -51,9 +53,13 @@ export async function GET(request: NextRequest) {
           cardIssuancesCollection.findByMembershipId(membership.id),
         ])
 
+        const paid = isPaidMembershipStatus(membership.status)
+        const canEncode = paid && (cardIssuance?.queueStatus !== 'PENDING')
+
         return {
           ...number,
-          magstripeData,
+          magstripeData: canEncode ? magstripeData : '',
+          canEncode,
           membership: member
             ? { id: membership.id, status: membership.status, cardType: membership.cardType, member }
             : null,

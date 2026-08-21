@@ -1,12 +1,13 @@
 import { randomBytes } from 'crypto'
 import { v4 as uuidv4 } from 'uuid'
 import { membershipsCollection } from '@/lib/db'
+import { publicAppBaseUrl } from '@/lib/public-url'
 
 const SHORT_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz'
 const SHORT_CODE_LENGTH = 8
 
 export function publicAppUrl() {
-  return process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'
+  return publicAppBaseUrl()
 }
 
 export function membershipCardUrl(membershipId: string, accessToken: string) {
@@ -15,6 +16,22 @@ export function membershipCardUrl(membershipId: string, accessToken: string) {
 
 export function membershipCardShortUrl(shortCode: string) {
   return `${publicAppUrl()}/c/${encodeURIComponent(shortCode)}`
+}
+
+export function membershipQrGatewayUrl(input: {
+  tenantSlug?: string
+  cardNumber?: string | number
+  shortCode?: string
+}) {
+  const origin = publicAppUrl()
+  const slug = (input.tenantSlug || '').trim()
+  const cardNumber =
+    input.cardNumber != null && String(input.cardNumber).trim() !== '' ? String(input.cardNumber).trim() : ''
+  const shortCode = (input.shortCode || '').trim()
+  if (slug && cardNumber) return `${origin}/q/${encodeURIComponent(slug)}/${encodeURIComponent(cardNumber)}`
+  if (slug && shortCode) return `${origin}/q/${encodeURIComponent(slug)}/${encodeURIComponent(shortCode)}`
+  if (shortCode) return `${origin}/q/${encodeURIComponent(shortCode)}`
+  return origin
 }
 
 export function generateCardShortCode(length = SHORT_CODE_LENGTH) {

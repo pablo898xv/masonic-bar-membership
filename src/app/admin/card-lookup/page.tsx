@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
-import { primaryTrack, stripSentinels, tracksMatch, tracksFromMagstripe } from '@/lib/msrx6/protocol'
+import { primaryTrack, stripSentinels, tracksMatch, tracksFromMagstripe, formatMagstripeTrackList, type IsoTracks, type MagstripeTrack } from '@/lib/msrx6/protocol'
 
 interface LookupMembership {
   id: string
@@ -33,6 +33,7 @@ interface LookupResult {
   found: boolean
   cardNumber: number
   magstripeData: string
+  magstripeTracks?: MagstripeTrack[]
   isAssigned?: boolean
   memberships?: LookupMembership[]
   error?: string
@@ -59,6 +60,7 @@ export default function CardLookupPage() {
   const [error, setError] = useState('')
   const [result, setResult] = useState<LookupResult | null>(null)
   const [swipedTrack, setSwipedTrack] = useState<string | null>(null)
+  const [swipedTracks, setSwipedTracks] = useState<IsoTracks | null>(null)
 
   const lookup = async (value: string) => {
     const q = value.trim()
@@ -84,6 +86,7 @@ export default function CardLookupPage() {
   const handleSearch = async (event: FormEvent) => {
     event.preventDefault()
     setSwipedTrack(null)
+    setSwipedTracks(null)
     await lookup(query)
   }
 
@@ -94,7 +97,12 @@ export default function CardLookupPage() {
       const tracks = await writer.readCard()
       const raw = primaryTrack(tracks)
       if (!raw) throw new Error('The swipe returned empty tracks. Try again at a steady speed.')
-      const display = tracks.track2 ? `;${stripSentinels(tracks.track2)}` : raw
+      const display = tracks.track2
+        ? `;${stripSentinels(tracks.track2)}`
+        : tracks.track1
+          ? `%${stripSentinels(tracks.track1)}`
+          : `+${stripSentinels(tracks.track3)}`
+      setSwipedTracks(tracks)
       setSwipedTrack(display)
       setQuery(display)
       await lookup(raw)
@@ -107,9 +115,10 @@ export default function CardLookupPage() {
 
   const expected = result?.magstripeData
   const writeMatch =
-    result && swipedTrack
-      ? tracksMatch(tracksFromMagstripe(expected || ''), tracksFromMagstripe(swipedTrack))
+    result && swipedTracks
+      ? tracksMatch(tracksFromMagstripe(expected || '', result.magstripeTracks), swipedTracks)
       : null
+  const trackLabel = formatMagstripeTrackList(result?.magstripeTracks)
 
   const owner = result?.memberships?.find((item) => item.status === 'ACTIVE') || result?.memberships?.[0]
 
@@ -178,12 +187,12 @@ export default function CardLookupPage() {
           <CardContent className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Expected Track 2</p>
-                <p className="font-mono font-bold text-gray-900 mt-1">{result.magstripeData}</p>
+                <p className="text-sm text-gray-500">Expected {trackLabel}</p>
+                <p className="font-mono font-bold text-gray-900 mt-1 break-all">{result.magstripeData}</p>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500">Swiped Track 2</p>
-                <p className="font-mono font-bold text-gray-900 mt-1">{swipedTrack || 'Not swiped yet'}</p>
+                <p className="text-sm text-gray-500">Swiped</p>
+                <p className="font-mono font-bold text-gray-900 mt-1 break-all">{swipedTrack || 'Not swiped yet'}</p>
               </div>
             </div>
 

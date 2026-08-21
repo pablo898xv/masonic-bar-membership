@@ -12,14 +12,18 @@ import { formatMembershipQRData } from '@/lib/qrcode'
 import { ensureMembershipCardLink } from '@/lib/card-link'
 import { emailService } from '@/lib/email'
 import { sendMembershipSms } from '@/lib/sms'
+import { UK_MOBILE_SMS_MESSAGE } from '@/lib/phone'
 import { hasDigitalCard } from '@/lib/card-type'
+import { isPaidMembershipStatus } from '@/lib/payment-methods'
 import { formatMagstripeData, getAppSettings } from '@/lib/settings'
 import { assertCreditsAvailable, consumeIssuanceCredit, unchargedFormats } from '@/lib/tenancy'
 import { v4 as uuidv4 } from 'uuid'
 
 function smsSkipMessage(skipped?: string, fallback?: string) {
   if (skipped === 'disabled') return 'Digital card SMS is turned off in platform settings'
-  if (skipped === 'invalid_phone' || skipped === 'no_phone') return 'This member has no valid mobile number'
+  if (skipped === 'invalid_phone' || skipped === 'no_phone' || skipped === 'not_mobile') {
+    return UK_MOBILE_SMS_MESSAGE
+  }
   if (skipped === 'not_configured') return 'Twilio is not configured'
   if (skipped === 'no_credits') return fallback || 'Not enough credits to send SMS'
   if (skipped === 'empty_body') return 'The digital card SMS template is empty'
@@ -106,7 +110,10 @@ async function ensureWalletPass(membershipId: string, cardNumber: number) {
     passTypeId: settings.passTypeIdentifier || 'pass.com.masonicbar.membership',
     serialNumber: uuidv4(),
     authToken: uuidv4(),
-    qrCodeData: await formatMembershipQRData(cardNumber, membership?.tenantId),
+    qrCodeData: await formatMembershipQRData(cardNumber, membership?.tenantId, {
+      membershipId,
+      shortCode: membership?.shortCode,
+    }),
     lastUpdated: new Date(),
   })
 }
@@ -114,6 +121,7 @@ async function ensureWalletPass(membershipId: string, cardNumber: number) {
 export async function ensureReadyToEncode(membershipId: string) {
   const membership = await membershipsCollection.findById(membershipId)
   if (!membership) return null
+  if (!isPaidMembershipStatus(membership.status)) return null
 
   const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
   if (!membershipNumber) return null
@@ -281,7 +289,10 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
   }
 }
 
-export async function fulfillPaidMembership(membershipId: string) {
+export async function fulfillPaidMembership(
+  membershipId: string,
+  options?: { notifyEmail?: boolean; notifySms?: boolean }
+) {
   const membership = await membershipsCollection.findById(membershipId)
   if (!membership) {
     throw new Error('Membership not found')
@@ -359,16 +370,18 @@ export async function fulfillPaidMembership(membershipId: string) {
   }
 
   if (!alreadyActive && member && membershipNumber) {
-    await emailService.sendWelcomeEmail({
-      memberName: member.name,
-      memberEmail: member.email,
-      cardNumber: membershipNumber.cardNumber,
-      cardType: membership.cardType,
-      subscriptionName: subscriptionPlan.name,
-      expiryDate,
-      qrCodeUrl: hasDigitalCard(membership.cardType) ? link.cardUrl : undefined,
-    })
-    if (hasDigitalCard(membership.cardType)) {
+    if (options?.notifyEmail !== false) {
+      await emailService.sendWelcomeEmail({
+        memberName: member.name,
+        memberEmail: member.email,
+        cardNumber: membershipNumber.cardNumber,
+        cardType: membership.cardType,
+        subscriptionName: subscriptionPlan.name,
+        expiryDate,
+        qrCodeUrl: hasDigitalCard(membership.cardType) ? link.cardUrl : undefined,
+      })
+    }
+    if (options?.notifySms !== false && hasDigitalCard(membership.cardType)) {
       await notifyDigitalCardSms(membershipId)
     }
   }

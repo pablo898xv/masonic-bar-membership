@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { packIsRevocable, presentCatalog, formatCredits } from '@/lib/credits'
 import { creditLedgerCollection } from '@/lib/db'
 import { isSuperAdmin, requireAdmin } from '@/lib/auth'
+import { creditPurchaseMethods } from '@/lib/payment-options'
 import { addCredits, requireTenant } from '@/lib/tenancy'
 
 export async function GET(request: NextRequest) {
@@ -12,12 +13,14 @@ export async function GET(request: NextRequest) {
     if (error || !tenant) return error!
     const platformAdmin = isSuperAdmin(user)
     const ledger = await creditLedgerCollection.findByTenant(tenant.id)
+    const payments = await creditPurchaseMethods()
     return NextResponse.json({
       creditBalance: tenant.creditBalance,
       creditBalanceLabel: formatCredits(tenant.creditBalance),
       packages: presentCatalog(),
       canAdjust: platformAdmin,
       canRevokePacks: platformAdmin,
+      payments,
       ledger: ledger.map((entry) => ({
         ...entry,
         revocable: platformAdmin && packIsRevocable(entry),

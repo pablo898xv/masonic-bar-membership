@@ -5,12 +5,19 @@ import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
+import type { PaymentOptionsView } from '@/components/payment-method-picker'
+import { isManualPaymentMethod } from '@/lib/payment-methods'
 
 interface Member {
   id: string
   name: string
   email: string
   phone: string
+  memberships?: Array<{
+    id: string
+    status: string
+    membershipNumber?: { cardNumber: number }
+  }>
 }
 
 interface SubscriptionPlan {
@@ -34,8 +41,16 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
   const [cardType, setCardType] = useState('QR_CODE')
   const [paymentMethod, setPaymentMethod] = useState('OPEN_BANKING')
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
+  const [payments, setPayments] = useState<PaymentOptionsView>({
+    openBanking: true,
+    card: [],
+    defaultMethod: 'OPEN_BANKING',
+    cardLabel: 'Card',
+  })
   const isComplimentary = paymentMethod === 'COMPLIMENTARY'
+  const collectedNow = isComplimentary || isManualPaymentMethod(paymentMethod)
   const outOfCredits = creditBalance !== null && creditBalance < 1
+  const existingCard = member?.memberships?.find((item) => item.status !== 'CANCELLED')
 
   useEffect(() => {
     async function fetchData() {
@@ -57,6 +72,13 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
         setCreditBalance(
           typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
         )
+        if (tenantData.tenant?.payments) {
+          const next = tenantData.tenant.payments
+          setPayments(next)
+          setPaymentMethod(
+            next.openBanking || next.card.length ? next.defaultMethod || 'OPEN_BANKING' : 'CASH'
+          )
+        }
         if (plansData.length > 0) setSelectedPlan(plansData[0].id)
       } catch (err: any) {
         setError(err.message)
@@ -70,6 +92,10 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (existingCard) {
+      setError('This member already has a card at this venue. Renew or replace that membership instead.')
+      return
+    }
     setSubmitting(true)
     setError('')
 
@@ -93,7 +119,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
 
       const data = await res.json()
 
-      if (isComplimentary || data.complimentary) {
+      if (isComplimentary || data.complimentary || data.collectedInPerson || data.freeIssue || !data.paymentRequired) {
         router.push(`/admin/members/${resolvedParams.id}`)
         return
       }
@@ -101,14 +127,13 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
       const paymentRes = await fetch('/api/payments/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ membershipId: data.membership.id })
+        body: JSON.stringify({ membershipId: data.membership.id, paymentMethod })
       })
 
+      const paymentData = await paymentRes.json().catch(() => ({}))
       if (!paymentRes.ok) {
-        throw new Error('Failed to initiate payment')
+        throw new Error(paymentData.error || 'Failed to initiate payment')
       }
-
-      const paymentData = await paymentRes.json()
       const checkoutUrl = paymentData.redirectUrl || paymentData.paymentUrl
 
       if (checkoutUrl) {
@@ -153,7 +178,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
           <h2 className="text-lg font-semibold text-gray-900">Member Details</h2>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
             <div>
               <p className="text-gray-500">Name</p>
               <p className="font-medium">{member.name}</p>
@@ -167,6 +192,16 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
               <p className="font-medium">{member.phone}</p>
             </div>
           </div>
+          {existingCard && (
+            <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-4">
+              This member already has card #{existingCard.membershipNumber?.cardNumber ?? '—'} (
+              {existingCard.status.toLowerCase()}). Each member can have one card at this venue.{' '}
+              <a href={`/admin/memberships/${existingCard.id}`} className="underline">
+                Open the existing membership
+              </a>{' '}
+              to renew or replace it.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -219,14 +254,26 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
                   options={[
-                    { value: 'OPEN_BANKING', label: 'Open banking (Hope Macy)' },
-                    { value: 'COMPLIMENTARY', label: 'Complimentary (no charge)' }
+                    ...(payments.card.length
+                      ? [{ value: 'CARD', label: payments.cardLabel || 'Card' }]
+                      : []),
+                    ...(payments.openBanking
+                      ? [{ value: 'OPEN_BANKING', label: 'Open banking' }]
+                      : []),
+                    { value: 'CASH', label: 'Cash' },
+                    { value: 'IN_PERSON', label: 'In person' },
+                    { value: 'COMPLIMENTARY', label: 'Complimentary (no charge)' },
                   ]}
                 />
 
                 {isComplimentary && (
                   <p className="text-sm text-blue-800 bg-blue-50 p-3 rounded-lg">
                     Complimentary memberships are not charged. The membership will be activated immediately and the card will go to the encode queue.
+                  </p>
+                )}
+                {isManualPaymentMethod(paymentMethod) && (
+                  <p className="text-sm text-blue-800 bg-blue-50 p-3 rounded-lg">
+                    This records a cash or in-person payment taken at the venue. The membership will be activated immediately.
                   </p>
                 )}
 
@@ -243,7 +290,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                       Valid for {selectedPlanDetails.durationYears} year{selectedPlanDetails.durationYears > 1 ? 's' : ''}
                     </div>
                     <p className="mt-2 text-sm text-yellow-700 bg-yellow-50 p-2 rounded">
-                      Uses 1 issuance credit{creditBalance !== null ? ` (${creditBalance} remaining)` : ''}. The card will be added to the encoding queue{isComplimentary ? '' : ' after payment'}.
+                      Uses 1 issuance credit{creditBalance !== null ? ` (${creditBalance} remaining)` : ''}. The card will be added to the encoding queue{collectedNow ? '' : ' after payment'}.
                     </p>
                     {outOfCredits && (
                       <p className="mt-2 text-sm text-red-700 bg-red-50 p-2 rounded">
@@ -261,12 +308,18 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
               <Button type="button" variant="secondary" onClick={() => router.back()}>
                 Cancel
               </Button>
-              <Button type="submit" loading={submitting} disabled={outOfCredits}>
-                {outOfCredits
+              <Button type="submit" loading={submitting} disabled={outOfCredits || Boolean(existingCard)}>
+                {existingCard
+                  ? 'Card already issued'
+                  : outOfCredits
                   ? 'No credits remaining'
                   : isComplimentary
                     ? 'Issue Complimentary Membership'
-                    : 'Proceed to Payment'}
+                    : !selectedPlanDetails?.price
+                      ? 'Issue free membership'
+                    : isManualPaymentMethod(paymentMethod)
+                      ? 'Record payment and issue'
+                      : 'Proceed to Payment'}
               </Button>
             </CardFooter>
           )}

@@ -4,6 +4,7 @@ import { PKPass } from 'passkit-generator'
 import { v4 as uuid } from 'uuid'
 import { format } from 'date-fns'
 import { generateQRCodeBuffer, formatMembershipQRData } from './qrcode'
+import { isTillQrPayload } from './qr-payload'
 import { AppSettings, getAppSettings } from './settings'
 import { tenantsCollection } from './db'
 
@@ -130,6 +131,8 @@ export async function generateWalletPass(options: {
   subscriptionName: string
   expiryDate: Date
   tenantId?: string
+  membershipId?: string
+  shortCode?: string
   serialNumber?: string
   authToken?: string
 }): Promise<GeneratedPass> {
@@ -140,7 +143,10 @@ export async function generateWalletPass(options: {
 
   const serialNumber = options.serialNumber || uuid()
   const authToken = options.authToken || uuid().replace(/-/g, '')
-  const qrCodeData = await formatMembershipQRData(cardNumber, tenantId)
+  const qrCodeData = await formatMembershipQRData(cardNumber, tenantId, {
+    membershipId: options.membershipId,
+    shortCode: options.shortCode,
+  })
 
   const tenant = tenantId ? await tenantsCollection.findById(tenantId) : null
   const venueName = tenant?.name?.trim() || 'Membership Manager'
@@ -159,7 +165,7 @@ export async function generateWalletPass(options: {
     barcode: {
       message: qrCodeData,
       format: 'PKBarcodeFormatQR',
-      messageEncoding: 'iso-8859-1',
+      messageEncoding: isTillQrPayload(qrCodeData) ? 'iso-8859-1' : 'utf-8',
     },
     primaryFields: [
       {

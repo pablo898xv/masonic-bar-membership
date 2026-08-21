@@ -47,11 +47,11 @@ export function TenantSwitcher() {
 
   return (
     <div className="px-4 pb-4 space-y-2">
-      <label className="block text-xs uppercase tracking-wide text-slate-500">Venue</label>
+      <label className="block text-xs uppercase tracking-wide text-gray-500 dark:text-slate-500">Venue</label>
       <select
         value={currentId}
         onChange={(event) => void switchTenant(event.target.value)}
-        className="w-full rounded-lg bg-slate-800 text-slate-100 text-sm px-3 py-2 border border-slate-700"
+        className="w-full rounded-lg bg-gray-50 dark:bg-slate-800 text-gray-900 dark:text-slate-100 text-sm px-3 py-2 border border-gray-200 dark:border-slate-700"
       >
         {tenants.map((tenant) => (
           <option key={tenant.id} value={tenant.id}>
@@ -59,9 +59,9 @@ export function TenantSwitcher() {
           </option>
         ))}
       </select>
-      <p className="text-xs text-slate-400">
+      <p className="text-xs text-gray-500 dark:text-slate-400">
         Credits:{' '}
-        <span className="font-semibold text-white">
+        <span className="font-semibold text-gray-900 dark:text-white">
           {formatBalance(credits ?? current?.creditBalance ?? 0)}
         </span>
       </p>

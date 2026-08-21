@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { membershipsCollection } from '@/lib/db'
+import { membershipsCollection, paymentTransactionsCollection } from '@/lib/db'
 import { deleteMembershipAndReleaseCard } from '@/lib/delete-membership'
 import { formatMagstripeData } from '@/lib/settings'
 import { belongsToTenant, requireTenant } from '@/lib/tenancy'
 import { requireAdmin } from '@/lib/auth'
 import { hasValidSession } from '@/lib/auth-token'
 import { canAccessMembership, membershipNotFound } from '@/lib/membership-access'
+import { isPaidMembershipStatus } from '@/lib/payment-methods'
+import { latestOpenMembershipPayment, membershipPaymentSummary } from '@/lib/membership-payment'
 
 export async function GET(
   request: NextRequest,
@@ -43,16 +45,25 @@ export async function GET(
     if (error || !tenant) return error!
     if (!belongsToTenant(result.membership, tenant.id)) return membershipNotFound()
 
+    const paid = isPaidMembershipStatus(result.membership.status)
+    const transactions = await paymentTransactionsCollection.findByMembershipId(result.membership.id)
+    const pendingPayment = latestOpenMembershipPayment(transactions)
+
     return NextResponse.json({
       ...result.membership,
       member: result.member,
       membershipNumber: result.membershipNumber,
       subscriptionPlan: result.subscriptionPlan,
       cardIssuance: result.cardIssuance || null,
-      magstripeData: await formatMagstripeData(result.membershipNumber.cardNumber, result.membership.tenantId),
-      digitalCardPath: result.membership.accessToken
-        ? `/membership/card/${result.membership.id}?token=${encodeURIComponent(result.membership.accessToken)}`
-        : null,
+      magstripeData: paid
+        ? await formatMagstripeData(result.membershipNumber.cardNumber, result.membership.tenantId)
+        : '',
+      digitalCardPath:
+        paid && result.membership.accessToken
+          ? `/membership/card/${result.membership.id}?token=${encodeURIComponent(result.membership.accessToken)}`
+          : null,
+      pendingPayment,
+      payment: membershipPaymentSummary(result.membership, transactions),
     })
   } catch (error) {
     console.error('Error fetching membership:', error)
@@ -78,7 +89,7 @@ export async function PATCH(
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
     
-    const allowedFields = ['status', 'notes']
+    const allowedFields = ['notes']
     const updateData: Record<string, unknown> = {}
     
     for (const field of allowedFields) {

@@ -9,6 +9,12 @@ import { Badge } from '@/components/ui/badge'
 import Link from 'next/link'
 import { format } from 'date-fns'
 import { PublicVenueHeader } from '@/components/brand/public-venue-header'
+import {
+  PaymentMethodPicker,
+  defaultPaymentMethod,
+  selectableTileClass,
+  type PaymentOptionsView,
+} from '@/components/payment-method-picker'
 
 interface Membership {
   id: string
@@ -51,7 +57,13 @@ function RenewContent() {
   const [submitting, setSubmitting] = useState(false)
 
   const [selectedPlan, setSelectedPlan] = useState('')
-  const paymentMethod = 'OPEN_BANKING'
+  const [paymentMethod, setPaymentMethod] = useState<'CARD' | 'OPEN_BANKING' | ''>('')
+  const [payments, setPayments] = useState<PaymentOptionsView>({
+    openBanking: true,
+    card: [],
+    defaultMethod: 'OPEN_BANKING',
+    cardLabel: 'Card',
+  })
 
   useEffect(() => {
     async function fetchData() {
@@ -62,9 +74,10 @@ function RenewContent() {
       }
 
       try {
-        const [membershipRes, plansRes] = await Promise.all([
+        const [membershipRes, plansRes, brandingRes] = await Promise.all([
           fetch(`/api/memberships/${membershipId}${token ? `?token=${encodeURIComponent(token)}` : ''}`),
-          fetch('/api/subscription-plans?active=true')
+          fetch('/api/subscription-plans?active=true'),
+          fetch('/api/branding'),
         ])
 
         if (!membershipRes.ok) {
@@ -85,6 +98,13 @@ function RenewContent() {
         setMembership(membershipData)
         setPlans(plansData)
         setSelectedPlan(membershipData.subscriptionPlan.id)
+        if (brandingRes.ok) {
+          const branding = await brandingRes.json()
+          if (branding.payments) {
+            setPayments(branding.payments)
+            setPaymentMethod((current) => current || defaultPaymentMethod(branding.payments))
+          }
+        }
       } catch (err) {
         setError('Failed to load membership details')
       } finally {
@@ -96,7 +116,10 @@ function RenewContent() {
   }, [membershipId, token])
 
   const handleRenew = async () => {
-    if (!membership) return
+    if (!membership || !selectedPlan || !paymentMethod) {
+      setError('Please complete all required fields')
+      return
+    }
 
     setSubmitting(true)
     setError('')
@@ -118,18 +141,27 @@ function RenewContent() {
       }
 
       const renewData = await renewRes.json()
+      const renewed = renewData.membership || renewData.renewal
+      if (!renewData.paymentRequired || renewData.freeIssue) {
+        const token = renewed?.accessToken || ''
+        if (renewed?.id && token) {
+          window.location.href = `/membership/card/${renewed.id}?token=${encodeURIComponent(token)}&paid=1`
+          return
+        }
+        router.push(`/membership/payment-complete?membershipId=${renewed?.id || ''}`)
+        return
+      }
 
       const paymentRes = await fetch('/api/payments/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ membershipId: renewData.renewal.id })
+        body: JSON.stringify({ membershipId: renewData.renewal.id, paymentMethod })
       })
 
+      const paymentData = await paymentRes.json().catch(() => ({}))
       if (!paymentRes.ok) {
-        throw new Error('Failed to initiate payment')
+        throw new Error(paymentData.error || 'Failed to initiate payment')
       }
-
-      const paymentData = await paymentRes.json()
 
       if (paymentData.redirectUrl) {
         window.location.href = paymentData.redirectUrl
@@ -150,7 +182,7 @@ function RenewContent() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="flex items-center justify-center min-h-full bg-gray-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     )
@@ -158,7 +190,7 @@ function RenewContent() {
 
   if (error && !membership) {
     return (
-      <div className="min-h-screen bg-gray-50 py-12 px-4">
+      <div className="min-h-full bg-gray-50 py-12 px-4">
         <div className="max-w-md mx-auto">
           <Card>
             <CardContent className="pt-6 text-center">
@@ -169,8 +201,8 @@ function RenewContent() {
               </div>
               <h2 className="text-xl font-semibold text-gray-900 mb-2">Unable to Renew</h2>
               <p className="text-gray-600 mb-6">{error}</p>
-              <Link href="/membership/register">
-                <Button>Register as New Member</Button>
+              <Link href="/">
+                <Button>Return home</Button>
               </Link>
             </CardContent>
           </Card>
@@ -180,7 +212,7 @@ function RenewContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
+    <div className="min-h-full bg-gray-50 py-12 px-4">
       <div className="max-w-lg mx-auto">
         <PublicVenueHeader subtitle="Renew your membership" />
 
@@ -228,11 +260,9 @@ function RenewContent() {
                 {plans.map((plan) => (
                   <label
                     key={plan.id}
-                    className={`flex items-center justify-between p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                    className={`flex items-center justify-between p-4 ${selectableTileClass(
                       selectedPlan === plan.id
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
+                    )}`}
                   >
                     <div className="flex items-center">
                       <input
@@ -257,11 +287,7 @@ function RenewContent() {
             </div>
 
             <div className="border-t border-gray-200 pt-6">
-              <h3 className="font-medium text-gray-900 mb-4">Payment</h3>
-              <div className="p-4 rounded-lg border-2 border-blue-500 bg-blue-50 text-center">
-                <p className="font-medium text-gray-900">Open banking</p>
-                <p className="text-xs text-gray-500 mt-1">Pay from your bank via Hope Macy</p>
-              </div>
+              <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} options={payments} />
             </div>
 
             {selectedPlanDetails && (
@@ -282,7 +308,11 @@ function RenewContent() {
             <Link href="/">
               <Button variant="ghost">Cancel</Button>
             </Link>
-            <Button onClick={handleRenew} loading={submitting}>
+            <Button
+              onClick={handleRenew}
+              loading={submitting}
+              disabled={!selectedPlan || !paymentMethod || (!payments.openBanking && payments.card.length === 0)}
+            >
               Pay & Renew
             </Button>
           </CardFooter>
@@ -299,7 +329,7 @@ function RenewContent() {
 export default function RenewPage() {
   return (
     <Suspense fallback={
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="flex items-center justify-center min-h-full bg-gray-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     }>

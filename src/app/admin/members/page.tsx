@@ -14,7 +14,25 @@ interface Member {
   email: string
   phone: string
   createdAt: string
-  memberships: any[]
+  memberships: { status: string }[]
+}
+
+function membershipSummaryBadge(memberships: { status: string }[] | undefined) {
+  const items = memberships || []
+  const active = items.filter((item) => item.status === 'ACTIVE').length
+  if (active > 0) {
+    return <Badge variant="success">{active} active</Badge>
+  }
+  if (items.some((item) => item.status === 'PENDING_PAYMENT')) {
+    return <Badge variant="warning">Pending payment</Badge>
+  }
+  if (items.some((item) => item.status === 'PAID')) {
+    return <Badge variant="info">Paid</Badge>
+  }
+  if (items.some((item) => item.status === 'EXPIRED')) {
+    return <Badge variant="danger">Expired</Badge>
+  }
+  return <Badge variant="default">None</Badge>
 }
 
 export default function MembersPage() {
@@ -47,6 +65,9 @@ export default function MembersPage() {
 
   useEffect(() => {
     fetchMembers()
+    if (new URLSearchParams(window.location.search).get('add') === '1') {
+      setShowAddModal(true)
+    }
   }, [])
 
   const handleSearch = (e: React.FormEvent) => {
@@ -83,12 +104,12 @@ export default function MembersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Members</h1>
           <p className="text-gray-500 mt-1">Manage bar membership registrations</p>
         </div>
-        <Button onClick={() => setShowAddModal(true)}>
+        <Button onClick={() => setShowAddModal(true)} className="w-full sm:w-auto">
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
           </svg>
@@ -98,14 +119,14 @@ export default function MembersPage() {
 
       <Card>
         <CardHeader>
-          <form onSubmit={handleSearch} className="flex gap-4">
+          <form onSubmit={handleSearch} className="flex flex-col gap-3 sm:flex-row sm:items-end">
             <Input
               placeholder="Search by name, email, or phone..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="max-w-md"
+              className="max-w-none sm:max-w-md"
             />
-            <Button type="submit" variant="secondary">Search</Button>
+            <Button type="submit" variant="secondary" className="w-full sm:w-auto">Search</Button>
           </form>
         </CardHeader>
         <CardContent>
@@ -122,8 +143,8 @@ export default function MembersPage() {
             </div>
           ) : (
             <>
-              <div className="overflow-x-auto">
-                <table className="w-full">
+              <div className="overflow-x-auto -mx-4 sm:mx-0">
+                <table className="w-full min-w-[40rem]">
                   <thead>
                     <tr className="border-b border-gray-200">
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Name</th>
@@ -142,11 +163,7 @@ export default function MembersPage() {
                         <td className="py-3 px-4 text-gray-600">{member.email}</td>
                         <td className="py-3 px-4 text-gray-600">{member.phone}</td>
                         <td className="py-3 px-4">
-                          {member.memberships?.length > 0 ? (
-                            <Badge variant="success">{member.memberships.length} active</Badge>
-                          ) : (
-                            <Badge variant="default">None</Badge>
-                          )}
+                          {membershipSummaryBadge(member.memberships)}
                         </td>
                         <td className="py-3 px-4">
                           <div className="flex items-center gap-2">
@@ -155,6 +172,12 @@ export default function MembersPage() {
                               className="text-blue-600 hover:underline text-sm"
                             >
                               View
+                            </Link>
+                            <Link
+                              href={`/admin/members/${member.id}?edit=1`}
+                              className="text-blue-600 hover:underline text-sm"
+                            >
+                              Edit
                             </Link>
                             <Link
                               href={`/admin/members/${member.id}/purchase`}
@@ -171,7 +194,7 @@ export default function MembersPage() {
               </div>
 
               {pagination.totalPages > 1 && (
-                <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-4 pt-4 border-t border-gray-200">
                   <p className="text-sm text-gray-500">
                     Showing {members.length} of {pagination.total} members
                   </p>
@@ -225,11 +248,11 @@ export default function MembersPage() {
             onChange={(e) => setNewMember({ ...newMember, phone: e.target.value })}
             required
           />
-          <div className="flex justify-end gap-3 pt-4">
-            <Button type="button" variant="secondary" onClick={() => setShowAddModal(false)}>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end pt-4">
+            <Button type="button" variant="secondary" onClick={() => setShowAddModal(false)} className="w-full sm:w-auto">
               Cancel
             </Button>
-            <Button type="submit" loading={submitting}>
+            <Button type="submit" loading={submitting} className="w-full sm:w-auto">
               Add Member
             </Button>
           </div>

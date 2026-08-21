@@ -5,9 +5,10 @@ import {
   reconcileTransaction,
 } from '@/lib/open-banking'
 import { requireTenant } from '@/lib/tenancy'
+import { absolutePublicUrl } from '@/lib/public-url'
 
 function redirectTo(request: NextRequest, path: string) {
-  return NextResponse.redirect(new URL(path, request.url))
+  return NextResponse.redirect(absolutePublicUrl(request, path))
 }
 
 function returnPath(metadata?: Record<string, unknown>, fallback = '/') {
@@ -23,9 +24,15 @@ function returnPath(metadata?: Record<string, unknown>, fallback = '/') {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
-  const paymentId = searchParams.get('paymentId') || searchParams.get('poId') || ''
+  const paymentId =
+    searchParams.get('paymentId') ||
+    searchParams.get('poId') ||
+    searchParams.get('po') ||
+    searchParams.get('session_id') ||
+    ''
   const membershipId = searchParams.get('membershipId') || ''
   const kind = searchParams.get('kind') || ''
+  const redirectStatus = searchParams.get('status') || ''
 
   try {
     let transaction = paymentId
@@ -55,7 +62,7 @@ export async function GET(request: NextRequest) {
       return redirectTo(request, '/')
     }
 
-    const result = await reconcileTransaction(transaction)
+    const result = await reconcileTransaction(transaction, { redirectStatus })
     if (transaction.creditPurchase) {
       return redirectTo(
         request,
@@ -80,7 +87,7 @@ export async function GET(request: NextRequest) {
       }`
     )
   } catch (error) {
-    console.error('Error handling Hope Macy return:', error)
+    console.error('Error handling payment return:', error)
     if (kind === 'credits') return redirectTo(request, '/admin/credits?cancelled=1')
     if (membershipId) {
       return redirectTo(

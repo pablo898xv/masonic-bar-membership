@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { ReactNode, useEffect, useState } from 'react'
+import { AccountMenu } from '@/components/admin/account-menu'
 import { Msrx6StatusBar } from '@/components/admin/msrx6-status-bar'
 import { TenantSwitcher } from '@/components/admin/tenant-switcher'
 import { VenueBrandMark } from '@/components/admin/venue-brand-mark'
@@ -29,6 +30,7 @@ const navigation: NavItem[] = [
   { name: 'Card Lookup', href: '/admin/card-lookup', icon: SearchIcon },
   { name: 'Subscriptions', href: '/admin/subscriptions', icon: CalendarIcon },
   { name: 'Credits', href: '/admin/credits', icon: CreditsIcon },
+  { name: 'Reports', href: '/admin/reports', icon: ReportsIcon },
   { name: 'Users', href: '/admin/users', icon: StaffIcon },
   { name: 'Venue settings', href: '/admin/settings', icon: SettingsIcon },
 ]
@@ -103,6 +105,14 @@ function CreditsIcon() {
   )
 }
 
+function ReportsIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 3v18M7 11v10M15 7v14M3 21h18" />
+    </svg>
+  )
+}
+
 function StaffIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -130,8 +140,9 @@ function PlatformIcon() {
 
 export function AdminLayout({ children }: AdminLayoutProps) {
   const pathname = usePathname()
-  const [userName, setUserName] = useState<string | null>(null)
+  const [account, setAccount] = useState<{ name: string; email: string; totpEnabled: boolean } | null>(null)
   const [isPlatformAdmin, setIsPlatformAdmin] = useState(false)
+  const [navOpen, setNavOpen] = useState(false)
   const bare = pathname === '/admin/login' || pathname === '/admin/logout'
 
   useEffect(() => {
@@ -139,15 +150,42 @@ export function AdminLayout({ children }: AdminLayoutProps) {
     void (async () => {
       const res = await fetch('/api/auth/me')
       if (!res.ok) {
-        setUserName(null)
+        setAccount(null)
         setIsPlatformAdmin(false)
         return
       }
       const data = await res.json()
-      setUserName(data.user?.name || data.user?.email || null)
-      setIsPlatformAdmin(Boolean(data.user?.isPlatformAdmin))
+      const nextUser = data.user
+      setAccount(
+        nextUser
+          ? {
+              name: nextUser.name || nextUser.email || '',
+              email: nextUser.email || '',
+              totpEnabled: Boolean(nextUser.totpEnabled),
+            }
+          : null
+      )
+      setIsPlatformAdmin(Boolean(nextUser?.isPlatformAdmin))
     })()
   }, [bare, pathname])
+
+  useEffect(() => {
+    setNavOpen(false)
+  }, [pathname])
+
+  useEffect(() => {
+    if (!navOpen) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setNavOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = previous
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [navOpen])
 
   if (bare) return <>{children}</>
 
@@ -166,88 +204,122 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   ]
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="flex">
-        {/* Sidebar */}
-        <div className="fixed inset-y-0 left-0 w-64 bg-slate-900">
-          <div className="flex flex-col h-full">
-            <div className="px-4 py-4 bg-slate-800">
-              <VenueBrandMark />
-            </div>
-            <div className="pt-4 border-b border-slate-800">
-              <TenantSwitcher />
-            </div>
-            
-            <nav className="flex-1 px-4 py-4 space-y-1 overflow-y-auto">
-              {items.map((item) => {
-                const childActive = item.children?.some((child) => pathMatches(pathname, child.href))
-                const isActive = pathMatches(pathname, item.href, Boolean(item.children)) || Boolean(childActive)
-                
-                return (
-                  <div key={item.name}>
-                    <Link
-                      href={item.href}
-                      className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        isActive && !childActive
-                          ? 'bg-blue-600 text-white'
-                          : childActive
-                            ? 'bg-slate-800 text-white'
-                            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                      }`}
-                    >
-                      <item.icon />
-                      {item.name}
-                    </Link>
-                    {item.children && (
-                      <div className="mt-1 ml-4 pl-3 border-l border-slate-700 space-y-1">
-                        {item.children.map((child) => {
-                          const active = pathMatches(pathname, child.href)
-                          return (
-                            <Link
-                              key={child.href}
-                              href={child.href}
-                              className={`block px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                                active
-                                  ? 'bg-blue-600 text-white'
-                                  : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                              }`}
-                            >
-                              {child.name}
-                            </Link>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </nav>
-            
-            <div className="p-4 border-t border-slate-700">
-              {userName && (
-                <p className="px-3 pb-2 text-xs text-slate-400 truncate">{userName}</p>
-              )}
-              <Link
-                href={userName ? '/admin/logout' : `/admin/login?next=${encodeURIComponent(pathname)}`}
-                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                </svg>
-                {userName ? 'Logout' : 'Sign in'}
-              </Link>
-            </div>
+    <div className="min-h-full flex-1 bg-gray-50 overflow-x-hidden">
+      <div className="flex min-h-full">
+        {navOpen ? (
+          <button
+            type="button"
+            className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+            aria-label="Close menu"
+            onClick={() => setNavOpen(false)}
+          />
+        ) : null}
+
+        <aside
+          id="admin-nav"
+          className={`fixed inset-y-0 left-0 z-40 flex w-72 max-w-[min(18rem,85vw)] flex-col border-r border-gray-200 bg-white pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] transition-transform duration-200 ease-out dark:bg-slate-900 lg:w-64 lg:translate-x-0 ${
+            navOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2 px-4 py-4 bg-gray-50 dark:bg-slate-800">
+            <VenueBrandMark />
+            <button
+              type="button"
+              className="mt-1 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-200 lg:hidden dark:hover:bg-slate-700"
+              aria-label="Close menu"
+              onClick={() => setNavOpen(false)}
+            >
+              <CloseIcon />
+            </button>
           </div>
-        </div>
-        
-        {/* Main content */}
-        <div className="flex-1 ml-64">
-          <Msrx6StatusBar />
-          <main className="p-8">
-            {children}
-          </main>
+          <div className="pt-4 border-b border-gray-200 dark:border-slate-800">
+            <TenantSwitcher />
+          </div>
+
+          <nav className="flex-1 px-4 py-4 pb-6 space-y-1 overflow-y-auto">
+            {items.map((item) => {
+              const childActive = item.children?.some((child) => pathMatches(pathname, child.href))
+              const isActive = pathMatches(pathname, item.href, Boolean(item.children)) || Boolean(childActive)
+
+              return (
+                <div key={item.name}>
+                  <Link
+                    href={item.href}
+                    className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                      isActive && !childActive
+                        ? 'bg-blue-600 text-white'
+                        : childActive
+                          ? 'bg-gray-100 text-gray-900 dark:bg-slate-800 dark:text-white'
+                          : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white'
+                    }`}
+                  >
+                    <item.icon />
+                    {item.name}
+                  </Link>
+                  {item.children && (
+                    <div className="mt-1 ml-4 pl-3 border-l border-gray-200 dark:border-slate-700 space-y-1">
+                      {item.children.map((child) => {
+                        const active = pathMatches(pathname, child.href)
+                        return (
+                          <Link
+                            key={child.href}
+                            href={child.href}
+                            className={`block px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                              active
+                                ? 'bg-blue-600 text-white'
+                                : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
+                            }`}
+                          >
+                            {child.name}
+                          </Link>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </nav>
+        </aside>
+
+        <div className="flex min-w-0 flex-1 flex-col lg:ml-64">
+          <div className="sticky top-0 z-20 bg-white dark:bg-slate-900">
+            <header className="flex items-center gap-3 border-b border-gray-200 px-3 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] dark:border-slate-800 lg:px-6">
+              <button
+                type="button"
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-200 text-gray-700 dark:border-slate-700 dark:text-slate-200 lg:hidden"
+                aria-label="Open menu"
+                aria-expanded={navOpen}
+                aria-controls="admin-nav"
+                onClick={() => setNavOpen(true)}
+              >
+                <MenuIcon />
+              </button>
+              <Msrx6StatusBar />
+              <div className="shrink-0">
+                <AccountMenu user={account} onUserChange={setAccount} />
+              </div>
+            </header>
+          </div>
+          <main className="p-4 sm:p-6 lg:p-8">{children}</main>
         </div>
       </div>
     </div>
+  )
+}
+
+function MenuIcon() {
+  return (
+    <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+  )
+}
+
+function CloseIcon() {
+  return (
+    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
   )
 }

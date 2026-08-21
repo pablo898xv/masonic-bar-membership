@@ -20,6 +20,31 @@ export interface IsoTracks {
   track3: string
 }
 
+export type MagstripeTrack = 1 | 2 | 3
+
+export function parseMagstripeTracks(value?: unknown): MagstripeTrack[] {
+  const source = Array.isArray(value) ? value : []
+  return [
+    ...new Set(
+      source
+        .map((item) => (typeof item === 'string' ? Number(item) : item))
+        .filter((item): item is MagstripeTrack => item === 1 || item === 2 || item === 3)
+    ),
+  ].sort() as MagstripeTrack[]
+}
+
+export function normalizeMagstripeTracks(value?: unknown): MagstripeTrack[] {
+  const tracks = parseMagstripeTracks(value)
+  return tracks.length ? tracks : [2]
+}
+
+export function formatMagstripeTrackList(tracks?: unknown) {
+  const selected = normalizeMagstripeTracks(tracks)
+  if (selected.length === 1) return `Track ${selected[0]}`
+  if (selected.length === 2) return `Tracks ${selected[0]} and ${selected[1]}`
+  return `Tracks ${selected.slice(0, -1).join(', ')} and ${selected[selected.length - 1]}`
+}
+
 const STATUS_MAP: Record<number, DeviceStatus> = {
   0x30: 'ok', // '0'
   0x31: 'writeError', // '1'
@@ -63,6 +88,10 @@ export function stripSentinels(value: string): string {
   return value.trim().replace(/^[%;+]/, '').replace(/\?+$/, '')
 }
 
+export function magstripePrefixIsNumeric(prefix: string) {
+  return /^\d*$/.test(stripSentinels(prefix))
+}
+
 export function primaryTrack(tracks: IsoTracks): string {
   return tracks.track2 || tracks.track1 || tracks.track3
 }
@@ -93,16 +122,30 @@ export function cardNumberFromQuery(query: string, prefix = ';9998'): number | n
   return cardNumberFromMagstripe(trimmed, prefix)
 }
 
-export function tracksFromMagstripe(magstripeData: string): IsoTracks {
+export function inferredMagstripeTracks(magstripeData: string): MagstripeTrack[] {
   const trimmed = magstripeData.trim()
   const stripped = stripSentinels(trimmed)
-  const looksTrack1 = trimmed.startsWith('%') || /[A-Za-z^]/.test(stripped)
+  if (trimmed.startsWith('%') || /[A-Za-z^]/.test(stripped)) return [1]
+  return [2]
+}
 
-  if (looksTrack1) {
-    return { track1: stripped, track2: '', track3: '' }
+export function tracksFromMagstripe(magstripeData: string, tracks?: MagstripeTrack[]): IsoTracks {
+  const stripped = stripSentinels(magstripeData.trim())
+  const selected = tracks?.length ? normalizeMagstripeTracks(tracks) : inferredMagstripeTracks(magstripeData)
+  return {
+    track1: selected.includes(1) ? stripped : '',
+    track2: selected.includes(2) ? stripped : '',
+    track3: selected.includes(3) ? stripped : '',
   }
+}
 
-  return { track1: '', track2: stripped, track3: '' }
+export function summarizeIsoTracks(tracks: IsoTracks) {
+  const parts = [
+    tracks.track1 ? `T1:${tracks.track1}` : '',
+    tracks.track2 ? `T2:${tracks.track2}` : '',
+    tracks.track3 ? `T3:${tracks.track3}` : '',
+  ].filter(Boolean)
+  return parts.join(' ') || '(empty)'
 }
 
 export function buildIsoWrite(tracks: IsoTracks): Uint8Array {
@@ -159,10 +202,14 @@ function indexOfPair(buffer: Uint8Array, a: number, b: number): number {
 }
 
 export function tracksMatch(expected: IsoTracks, actual: IsoTracks): boolean {
-  const expectedPayload = expected.track2 || expected.track1
-  const actualPayload = actual.track2 || actual.track1
-  if (!expectedPayload || !actualPayload) return false
-  return stripSentinels(expectedPayload) === stripSentinels(actualPayload)
+  const keys = ['track1', 'track2', 'track3'] as const
+  let wrote = false
+  for (const key of keys) {
+    if (!expected[key]) continue
+    wrote = true
+    if (stripSentinels(expected[key]) !== stripSentinels(actual[key] || '')) return false
+  }
+  return wrote
 }
 
 export function statusLabel(status: DeviceStatus): string {

@@ -49,7 +49,10 @@ export async function GET(
     }
     
     let walletPass = await walletPassesCollection.findByMembershipId(id)
-    const qrData = await formatMembershipQRData(membershipNumber.cardNumber, membership.tenantId)
+    const qrData = await formatMembershipQRData(membershipNumber.cardNumber, membership.tenantId, {
+      membershipId: membership.id,
+      shortCode: membership.shortCode,
+    })
 
     if (!walletPass) {
       const settings = await getAppSettings()
@@ -77,6 +80,8 @@ export async function GET(
         subscriptionName: subscriptionPlan.name,
         expiryDate: membership.expiryDate!,
         tenantId: membership.tenantId,
+        membershipId: membership.id,
+        shortCode: membership.shortCode,
         serialNumber: walletPass.serialNumber,
         authToken: walletPass.authToken,
       })

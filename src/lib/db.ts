@@ -1,4 +1,14 @@
 import { getDb, Timestamp } from './firebase'
+import type { TenantCardPayments } from './card-processors'
+import {
+  canonicalMemberPhone,
+  memberEmailHash,
+  memberPhoneHash,
+  normalizeMemberEmail,
+  sealMemberFields,
+  storedMemberNeedsSeal,
+  unsealMemberFields,
+} from './member-pii'
 
 export interface Member {
   id: string
@@ -6,6 +16,7 @@ export interface Member {
   name: string
   email: string
   phone: string
+  signupCampaignId?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -43,12 +54,13 @@ export interface Membership {
   startDate?: Date
   expiryDate?: Date
   paymentId?: string
-  paymentMethod?: 'CARD' | 'OPEN_BANKING' | 'COMPLIMENTARY'
+  paymentMethod?: 'CARD' | 'OPEN_BANKING' | 'CASH' | 'IN_PERSON' | 'COMPLIMENTARY'
   paymentStatus: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'REFUNDED'
   tillSystemEnabled: boolean
   tillSystemEnabledAt?: Date
   accessToken?: string
   shortCode?: string
+  signupCampaignId?: string
   createdAt: Date
   updatedAt: Date
 }
@@ -90,7 +102,7 @@ export interface PaymentTransaction {
   creditPurchase?: boolean
   amount: number
   currency: string
-  paymentMethod: 'CARD' | 'OPEN_BANKING' | 'COMPLIMENTARY'
+  paymentMethod: 'CARD' | 'OPEN_BANKING' | 'CASH' | 'IN_PERSON' | 'COMPLIMENTARY'
   provider: string
   externalId?: string
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'REFUNDED'
@@ -114,6 +126,12 @@ export interface AdminUser {
   role: 'ADMIN' | 'MANAGER'
   isPlatformAdmin: boolean
   isActive: boolean
+  totpEnabled?: boolean
+  totpSecret?: string
+  totpPendingSecret?: string
+  totpBackupHashes?: string[]
+  totpEnabledAt?: Date
+  passwordUpdatedAt?: Date
   createdAt: Date
   updatedAt: Date
 }
@@ -122,6 +140,7 @@ export interface Tenant {
   id: string
   name: string
   slug: string
+  urlStub?: string
   status: 'ACTIVE' | 'SUSPENDED'
   creditBalance: number
   paymentMode: 'PLATFORM' | 'OWN'
@@ -129,8 +148,13 @@ export interface Tenant {
   bankSortCode?: string
   bankAccountNumber?: string
   magstripePrefix?: string
+  magstripeTracks?: number[]
+  qrCodeMode?: 'TILL' | 'URL'
+  qrRedirectUrl?: string
   tillSystemApiUrl?: string
   tillSystemApiKey?: string
+  cardPayments?: TenantCardPayments
+  openBankingEnabled?: boolean
   addressLine1?: string
   addressLine2?: string
   city?: string
@@ -157,6 +181,31 @@ export interface TenantUser {
   userId: string
   role: 'OWNER' | 'ADMIN' | 'MANAGER'
   createdAt: Date
+}
+
+export interface TenantApiKey {
+  id: string
+  tenantId: string
+  name: string
+  keyPrefix: string
+  keyHash: string
+  createdByUserId?: string
+  lastUsedAt?: Date
+  revokedAt?: Date
+  createdAt: Date
+}
+
+export interface SignupCampaign {
+  id: string
+  tenantId: string
+  name: string
+  token: string
+  status: 'ACTIVE' | 'ENDED'
+  createdByUserId?: string
+  endedAt?: Date
+  linkOpens?: number
+  createdAt: Date
+  updatedAt: Date
 }
 
 export interface CreditLedgerEntry {
@@ -193,6 +242,8 @@ const COLLECTIONS = {
   tenants: 'tenants',
   tenantUsers: 'tenantUsers',
   creditLedger: 'creditLedger',
+  tenantApiKeys: 'tenantApiKeys',
+  signupCampaigns: 'signupCampaigns',
 }
 
 function toFirestoreData(data: Record<string, unknown>): Record<string, unknown> {
@@ -224,13 +275,52 @@ function scoped<T extends { tenantId?: string }>(items: T[], tenantId?: string) 
   return items.filter((item) => item.tenantId === tenantId)
 }
 
+type StoredMember = Member & { emailHash?: string }
+
+function readMemberDoc(id: string, data: FirebaseFirestore.DocumentData): { member: Member; needsSeal: boolean } {
+  const stored = fromFirestoreData<StoredMember>(id, data)
+  return {
+    member: unsealMemberFields(stored) as Member,
+    needsSeal: storedMemberNeedsSeal(data),
+  }
+}
+
+async function persistSealedMembers(members: Member[]) {
+  if (!members.length) return
+  const db = getDb()
+  const chunkSize = 400
+  for (let offset = 0; offset < members.length; offset += chunkSize) {
+    const batch = db.batch()
+    for (const member of members.slice(offset, offset + chunkSize)) {
+      batch.update(
+        db.collection(COLLECTIONS.members).doc(member.id),
+        toFirestoreData({ ...sealMemberFields(member) })
+      )
+    }
+    await batch.commit()
+  }
+}
+
 export const membersCollection = {
   async create(data: Omit<Member, 'id' | 'createdAt' | 'updatedAt'>): Promise<Member> {
     const db = getDb()
     const docRef = db.collection(COLLECTIONS.members).doc()
     const now = new Date()
-    const member: Member = { ...data, id: docRef.id, createdAt: now, updatedAt: now }
-    await docRef.set(toFirestoreData(member as unknown as Record<string, unknown>))
+    const member: Member = {
+      ...data,
+      id: docRef.id,
+      name: data.name.trim(),
+      email: normalizeMemberEmail(data.email),
+      phone: data.phone.trim(),
+      createdAt: now,
+      updatedAt: now,
+    }
+    await docRef.set(
+      toFirestoreData({
+        ...member,
+        ...sealMemberFields(member),
+      } as unknown as Record<string, unknown>)
+    )
     return member
   },
 
@@ -238,18 +328,60 @@ export const membersCollection = {
     const db = getDb()
     const docRef = await db.collection(COLLECTIONS.members).doc(id).get()
     if (!docRef.exists) return null
-    return fromFirestoreData<Member>(id, docRef.data()!)
+    const { member, needsSeal } = readMemberDoc(id, docRef.data()!)
+    if (needsSeal) await persistSealedMembers([member])
+    return member
   },
 
   async findByEmail(email: string, tenantId?: string): Promise<Member | null> {
     const db = getDb()
-    const snapshot = await db.collection(COLLECTIONS.members)
-      .where('email', '==', email)
+    const normalized = normalizeMemberEmail(email)
+    const hashed = await db.collection(COLLECTIONS.members)
+      .where('emailHash', '==', memberEmailHash(normalized))
       .get()
-    const matches = snapshot.docs
-      .map((doc) => fromFirestoreData<Member>(doc.id, doc.data()))
-      .filter((member) => !tenantId || member.tenantId === tenantId)
-    return matches[0] || null
+    let docs = hashed.docs
+    if (!docs.length) {
+      const legacy = await db.collection(COLLECTIONS.members)
+        .where('email', '==', email)
+        .get()
+      docs = legacy.docs
+    }
+    if (!docs.length && email !== normalized) {
+      const legacyLower = await db.collection(COLLECTIONS.members)
+        .where('email', '==', normalized)
+        .get()
+      docs = legacyLower.docs
+    }
+    const matches = docs
+      .map((doc) => readMemberDoc(doc.id, doc.data()))
+      .filter((item) => !tenantId || item.member.tenantId === tenantId)
+    const match = matches[0]
+    if (!match) return null
+    if (match.needsSeal) await persistSealedMembers([match.member])
+    return match.member
+  },
+
+  async findByPhone(phone: string, tenantId?: string): Promise<Member | null> {
+    const hash = memberPhoneHash(phone)
+    if (!hash) return null
+    const db = getDb()
+    const hashed = await db.collection(COLLECTIONS.members)
+      .where('phoneHash', '==', hash)
+      .get()
+    const matches = hashed.docs
+      .map((doc) => readMemberDoc(doc.id, doc.data()))
+      .filter((item) => !tenantId || item.member.tenantId === tenantId)
+    if (matches[0]) {
+      if (matches[0].needsSeal) await persistSealedMembers([matches[0].member])
+      return matches[0].member
+    }
+    if (!tenantId) return null
+    const { members } = await this.findMany({ tenantId })
+    return members.find((member) => {
+      const left = canonicalMemberPhone(member.phone)
+      const right = canonicalMemberPhone(phone)
+      return Boolean(left && right && left === right)
+    }) || null
   },
 
   async findMany(options: { 
@@ -267,10 +399,14 @@ export const membersCollection = {
     }
 
     const snapshot = await query.get()
-    let members = snapshot.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) => 
-      fromFirestoreData<Member>(d.id, d.data())
+    const read = snapshot.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) =>
+      readMemberDoc(d.id, d.data())
     )
-    members = scoped(members, options.tenantId)
+    await persistSealedMembers(read.filter((item) => item.needsSeal).map((item) => item.member))
+    let members = scoped(
+      read.map((item) => item.member),
+      options.tenantId
+    )
 
     if (options.search) {
       const searchLower = options.search.toLowerCase()
@@ -288,7 +424,12 @@ export const membersCollection = {
 
   async update(id: string, data: Partial<Member>): Promise<Member> {
     const db = getDb()
-    const updateData = { ...data, updatedAt: new Date() }
+    const { name, email, phone, ...rest } = data
+    const updateData = {
+      ...rest,
+      ...sealMemberFields({ name, email, phone }),
+      updatedAt: new Date(),
+    }
     await db.collection(COLLECTIONS.members).doc(id).update(toFirestoreData(updateData as Record<string, unknown>))
     const updated = await this.findById(id)
     return updated!
@@ -309,23 +450,26 @@ export const membersCollection = {
 export const membershipNumbersCollection = {
   async createMany(numbers: Array<{ cardNumber: number; batchId?: string }>, tenantId: string): Promise<number> {
     const db = getDb()
-    const batch = db.batch()
     const now = new Date()
-    
-    for (const num of numbers) {
-      const docRef = db.collection(COLLECTIONS.membershipNumbers).doc()
-      const data: MembershipNumber = {
-        id: docRef.id,
-        tenantId,
-        cardNumber: num.cardNumber,
-        batchId: num.batchId,
-        isAssigned: false,
-        createdAt: now,
+    const chunkSize = 400
+
+    for (let offset = 0; offset < numbers.length; offset += chunkSize) {
+      const batch = db.batch()
+      for (const num of numbers.slice(offset, offset + chunkSize)) {
+        const docRef = db.collection(COLLECTIONS.membershipNumbers).doc()
+        const data: MembershipNumber = {
+          id: docRef.id,
+          tenantId,
+          cardNumber: num.cardNumber,
+          batchId: num.batchId,
+          isAssigned: false,
+          createdAt: now,
+        }
+        batch.set(docRef, toFirestoreData(data as unknown as Record<string, unknown>))
       }
-      batch.set(docRef, toFirestoreData(data as unknown as Record<string, unknown>))
+      await batch.commit()
     }
-    
-    await batch.commit()
+
     return numbers.length
   },
 
@@ -369,30 +513,39 @@ export const membershipNumbersCollection = {
     const db = getDb()
     let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.membershipNumbers)
       .orderBy('cardNumber', 'asc')
-    
-    if (options.assigned !== undefined) {
-      query = query.where('isAssigned', '==', options.assigned)
-    }
+
     if (options.batchId) {
       query = query.where('batchId', '==', options.batchId)
     }
-    if (options.take) {
-      query = query.limit(options.take)
-    }
 
     const snapshot = await query.get()
-    let numbers = snapshot.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) => 
-      fromFirestoreData<MembershipNumber>(d.id, d.data())
+    const all = scoped(
+      snapshot.docs.map((d: FirebaseFirestore.QueryDocumentSnapshot) =>
+        fromFirestoreData<MembershipNumber>(d.id, d.data())
+      ),
+      options.tenantId
     )
-    numbers = scoped(numbers, options.tenantId)
 
     const stats = {
-      total: numbers.length,
-      assigned: numbers.filter((number) => number.isAssigned).length,
-      available: numbers.filter((number) => !number.isAssigned).length,
+      total: all.length,
+      assigned: all.filter((number) => number.isAssigned).length,
+      available: all.filter((number) => !number.isAssigned).length,
     }
 
-    return { numbers, total: numbers.length, stats }
+    let numbers = all
+    if (options.assigned !== undefined) {
+      numbers = numbers.filter((number) => number.isAssigned === options.assigned)
+    }
+
+    const total = numbers.length
+    const skip = Math.max(0, options.skip || 0)
+    if (options.take) {
+      numbers = numbers.slice(skip, skip + options.take)
+    } else if (skip) {
+      numbers = numbers.slice(skip)
+    }
+
+    return { numbers, total, stats }
   },
 
   async findInRange(start: number, end: number): Promise<MembershipNumber[]> {
@@ -505,14 +658,16 @@ export const membershipsCollection = {
     return fromFirestoreData<Membership>(id, docRef.data()!)
   },
 
-  async findByShortCode(shortCode: string): Promise<Membership | null> {
+  async findByShortCode(shortCode: string, tenantId?: string): Promise<Membership | null> {
     const code = shortCode.trim()
     if (!code) return null
     const db = getDb()
     const snapshot = await db.collection(COLLECTIONS.memberships).where('shortCode', '==', code).limit(1).get()
     if (snapshot.empty) return null
     const doc = snapshot.docs[0]
-    return fromFirestoreData<Membership>(doc.id, doc.data())
+    const membership = fromFirestoreData<Membership>(doc.id, doc.data())
+    if (tenantId && membership.tenantId !== tenantId) return null
+    return membership
   },
 
   async findByIdWithRelations(id: string): Promise<{
@@ -958,6 +1113,14 @@ export const tenantsCollection = {
     return fromFirestoreData<Tenant>(doc.id, doc.data())
   },
 
+  async findByUrlStub(urlStub: string): Promise<Tenant | null> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.tenants).where('urlStub', '==', urlStub).limit(1).get()
+    if (snapshot.empty) return null
+    const doc = snapshot.docs[0]
+    return fromFirestoreData<Tenant>(doc.id, doc.data())
+  },
+
   async findMany(): Promise<Tenant[]> {
     const db = getDb()
     const snapshot = await db.collection(COLLECTIONS.tenants).orderBy('name', 'asc').get()
@@ -1015,6 +1178,95 @@ export const tenantUsersCollection = {
   async delete(id: string): Promise<void> {
     const db = getDb()
     await db.collection(COLLECTIONS.tenantUsers).doc(id).delete()
+  },
+}
+
+export const tenantApiKeysCollection = {
+  async create(data: Omit<TenantApiKey, 'id' | 'createdAt'>): Promise<TenantApiKey> {
+    const db = getDb()
+    const docRef = db.collection(COLLECTIONS.tenantApiKeys).doc()
+    const row: TenantApiKey = { ...data, id: docRef.id, createdAt: new Date() }
+    await docRef.set(toFirestoreData(row as unknown as Record<string, unknown>))
+    return row
+  },
+
+  async findById(id: string): Promise<TenantApiKey | null> {
+    const db = getDb()
+    const docRef = await db.collection(COLLECTIONS.tenantApiKeys).doc(id).get()
+    if (!docRef.exists) return null
+    return fromFirestoreData<TenantApiKey>(id, docRef.data()!)
+  },
+
+  async findByHash(keyHash: string): Promise<TenantApiKey | null> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.tenantApiKeys).where('keyHash', '==', keyHash).limit(1).get()
+    if (snapshot.empty) return null
+    const doc = snapshot.docs[0]
+    return fromFirestoreData<TenantApiKey>(doc.id, doc.data())
+  },
+
+  async findByTenant(tenantId: string): Promise<TenantApiKey[]> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.tenantApiKeys).where('tenantId', '==', tenantId).get()
+    return snapshot.docs
+      .map((doc) => fromFirestoreData<TenantApiKey>(doc.id, doc.data()))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+  },
+
+  async update(id: string, data: Partial<TenantApiKey>): Promise<TenantApiKey> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.tenantApiKeys).doc(id).update(toFirestoreData(data as Record<string, unknown>))
+    const updated = await this.findById(id)
+    return updated!
+  },
+}
+
+export const signupCampaignsCollection = {
+  async create(data: Omit<SignupCampaign, 'id' | 'createdAt' | 'updatedAt'>): Promise<SignupCampaign> {
+    const db = getDb()
+    const docRef = db.collection(COLLECTIONS.signupCampaigns).doc()
+    const now = new Date()
+    const row: SignupCampaign = { ...data, id: docRef.id, createdAt: now, updatedAt: now }
+    await docRef.set(toFirestoreData(row as unknown as Record<string, unknown>))
+    return row
+  },
+
+  async findById(id: string): Promise<SignupCampaign | null> {
+    const db = getDb()
+    const docRef = await db.collection(COLLECTIONS.signupCampaigns).doc(id).get()
+    if (!docRef.exists) return null
+    return fromFirestoreData<SignupCampaign>(id, docRef.data()!)
+  },
+
+  async findByToken(token: string): Promise<SignupCampaign | null> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.signupCampaigns).where('token', '==', token).limit(1).get()
+    if (snapshot.empty) return null
+    const doc = snapshot.docs[0]
+    return fromFirestoreData<SignupCampaign>(doc.id, doc.data())
+  },
+
+  async findByTenant(tenantId: string): Promise<SignupCampaign[]> {
+    const db = getDb()
+    const snapshot = await db.collection(COLLECTIONS.signupCampaigns).where('tenantId', '==', tenantId).get()
+    return snapshot.docs
+      .map((doc) => fromFirestoreData<SignupCampaign>(doc.id, doc.data()))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+  },
+
+  async update(id: string, data: Partial<SignupCampaign>): Promise<SignupCampaign> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.signupCampaigns).doc(id).update(
+      toFirestoreData({ ...data, updatedAt: new Date() } as Record<string, unknown>)
+    )
+    const updated = await this.findById(id)
+    return updated!
+  },
+
+  async incrementLinkOpens(id: string): Promise<void> {
+    const campaign = await this.findById(id)
+    if (!campaign) return
+    await this.update(id, { linkOpens: (campaign.linkOpens || 0) + 1 })
   },
 }
 

@@ -135,16 +135,7 @@ export function VenueLogoUpload({ tenantId, logoUrl, onUpdated }: Props) {
     <div className="space-y-3">
       <div className="flex items-center gap-4">
         <div
-          className="h-24 w-48 rounded-lg border border-gray-200 flex items-center justify-center overflow-hidden px-2"
-          style={
-            preview
-              ? {
-                  backgroundImage:
-                    'repeating-conic-gradient(#e5e7eb 0% 25%, transparent 0% 50%)',
-                  backgroundSize: '12px 12px',
-                }
-              : undefined
-          }
+          className="h-24 w-48 rounded-lg border border-gray-200 flex items-center justify-center overflow-hidden px-2 bg-[repeating-conic-gradient(#e5e7eb_0%_25%,transparent_0%_50%)] bg-[length:12px_12px] dark:bg-[repeating-conic-gradient(#334155_0%_25%,#1e293b_0%_50%)]"
         >
           {preview ? (
             <img src={preview} alt="Venue logo" className="max-h-20 max-w-full object-contain" />

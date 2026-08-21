@@ -49,7 +49,7 @@ function PaymentCompleteContent() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="flex items-center justify-center min-h-full bg-gray-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     )
@@ -58,7 +58,7 @@ function PaymentCompleteContent() {
   const isSuccess = status === 'success'
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4">
+    <div className="min-h-full bg-gray-50 py-12 px-4">
       <div className="max-w-md mx-auto">
         <Card>
           <CardHeader className="text-center">
@@ -107,7 +107,7 @@ function PaymentCompleteContent() {
                     <p className="text-sm text-gray-500 mb-4">
                       Show this QR code at the bar to use your membership
                     </p>
-                    <div className="bg-white p-4 rounded-lg border-2 border-gray-200 inline-block">
+                    <div className="bg-white dark:bg-white p-4 rounded-lg border-2 border-gray-200 inline-block">
                       <img src={qrCode} alt="Membership QR Code" className="w-48 h-48" />
                     </div>
                     <div className="mt-4 space-y-2">
@@ -167,7 +167,7 @@ function PaymentCompleteContent() {
 export default function PaymentCompletePage() {
   return (
     <Suspense fallback={
-      <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="flex items-center justify-center min-h-full bg-gray-50">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
       </div>
     }>
