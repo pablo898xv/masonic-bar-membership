@@ -21,7 +21,7 @@ export const partnerIssueSchema = z.object({
   subscriptionPlanId: z.string().min(1, 'Subscription plan ID is required'),
   cardNumber: z.number().int().positive().optional(),
   createCardNumber: z.boolean().optional(),
-  cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD']).default('QR_CODE'),
+  cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD', 'BOTH']).optional(),
   notifications: z
     .object({
       email: z.boolean().optional(),
@@ -34,8 +34,8 @@ export const partnerIssueSchema = z.object({
 export const membershipPurchaseSchema = z.object({
   memberId: z.string().min(1, 'Member ID is required'),
   subscriptionPlanId: z.string().min(1, 'Subscription plan ID is required'),
-  cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD']),
-  paymentMethod: z.enum(['CARD', 'OPEN_BANKING', 'CASH', 'IN_PERSON', 'COMPLIMENTARY']),
+  cardType: z.enum(['QR_CODE', 'PHYSICAL_CARD', 'BOTH']),
+  paymentMethod: z.enum(['CARD', 'OPEN_BANKING', 'CASH', 'IN_PERSON', 'COMPLIMENTARY']).optional(),
   adminIssued: z.boolean().optional(),
 })
 
@@ -64,6 +64,18 @@ export const adminChangePasswordSchema = z.object({
   currentPassword: z.string().min(1, 'Current password is required'),
   newPassword: z.string().min(8, 'Password must be at least 8 characters'),
   code: z.string().optional(),
+})
+
+export const adminStaffUpdateSchema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters').optional(),
+  email: z.string().email('Invalid email address').optional(),
+  role: z.enum(['OWNER', 'ADMIN', 'MANAGER']).optional(),
+  isActive: z.boolean().optional(),
+  password: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().min(8, 'Password must be at least 8 characters').optional()
+  ),
+  disableTotp: z.boolean().optional(),
 })
 
 export const adminCreateSchema = z.object({
@@ -110,6 +122,14 @@ export const appSettingsUpdateSchema = z.object({
   smsWelcomeTemplate: z.string().optional(),
   smsRenewalTemplate: z.string().optional(),
   smsDigitalCardTemplate: z.string().optional(),
+  emailWelcomeSubject: z.string().optional(),
+  emailWelcomeTemplate: z.string().optional(),
+  emailRenewalSubject: z.string().optional(),
+  emailRenewalTemplate: z.string().optional(),
+  emailRenewalConfirmSubject: z.string().optional(),
+  emailRenewalConfirmTemplate: z.string().optional(),
+  emailDigitalCardSubject: z.string().optional(),
+  emailDigitalCardTemplate: z.string().optional(),
 })
 
 export type MemberInput = z.infer<typeof memberSchema>

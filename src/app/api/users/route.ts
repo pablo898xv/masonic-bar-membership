@@ -1,21 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { adminUsersCollection, tenantUsersCollection } from '@/lib/db'
-import { publicAdminUser } from '@/lib/admin-user'
 import { hashPassword, requireAdmin } from '@/lib/auth'
-import { requireTenant } from '@/lib/tenancy'
+import { ensureUserCanAccessTenant, requireTenant } from '@/lib/tenancy'
+import { parseVenueRole, venueUserPayload } from '@/lib/venue-users'
 
 export async function GET(request: NextRequest) {
   try {
-    const { error: authError } = await requireAdmin(request)
-    if (authError) return authError
+    const { user: actor, error: authError } = await requireAdmin(request)
+    if (authError || !actor) return authError!
     const { tenant, error } = await requireTenant(request)
     if (error || !tenant) return error!
+    if (!(await ensureUserCanAccessTenant(actor.id, tenant.id))) {
+      return NextResponse.json({ error: 'You do not have access to that venue' }, { status: 403 })
+    }
     const links = await tenantUsersCollection.findByTenant(tenant.id)
     const users = await Promise.all(
       links.map(async (link) => {
         const user = await adminUsersCollection.findById(link.userId)
         if (!user) return null
-        return { ...publicAdminUser(user), tenantRole: link.role, tenantUserId: link.id }
+        return venueUserPayload(user, link)
       })
     )
     return NextResponse.json({ users: users.filter(Boolean) })
@@ -27,16 +30,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { error: authError } = await requireAdmin(request)
-    if (authError) return authError
+    const { user: actor, error: authError } = await requireAdmin(request)
+    if (authError || !actor) return authError!
     const { tenant, error } = await requireTenant(request)
     if (error || !tenant) return error!
+    if (!(await ensureUserCanAccessTenant(actor.id, tenant.id))) {
+      return NextResponse.json({ error: 'You do not have access to that venue' }, { status: 403 })
+    }
 
     const body = await request.json()
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
     const name = typeof body.name === 'string' ? body.name.trim() : ''
     const password = typeof body.password === 'string' ? body.password : ''
-    const role = body.role === 'OWNER' || body.role === 'ADMIN' ? body.role : 'MANAGER'
+    const role = parseVenueRole(body.role)
 
     if (!email || !name) {
       return NextResponse.json({ error: 'Name and email are required' }, { status: 400 })
@@ -62,8 +68,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'That user already belongs to this venue' }, { status: 409 })
     }
 
-    await tenantUsersCollection.create({ tenantId: tenant.id, userId: user.id, role })
-    return NextResponse.json({ ...publicAdminUser(user), tenantRole: role }, { status: 201 })
+    const link = await tenantUsersCollection.create({ tenantId: tenant.id, userId: user.id, role })
+    return NextResponse.json(venueUserPayload(user, link), { status: 201 })
   } catch (error) {
     console.error('Error adding user:', error)
     return NextResponse.json({ error: 'Failed to add user' }, { status: 500 })

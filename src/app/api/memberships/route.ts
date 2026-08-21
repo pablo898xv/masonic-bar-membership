@@ -21,23 +21,8 @@ import { onlinePaymentMethodError, publicPaymentOptions } from '@/lib/payment-op
 import { memberCardBlock } from '@/lib/member-card-limit'
 import { isZeroPrice } from '@/lib/money'
 import { requirePublicSignupCampaign } from '@/lib/signup-campaigns'
-
-async function nextCardNumber(tenantId: string) {
-  const existing = await membershipNumbersCollection.findFirstAvailable(tenantId)
-  if (existing) return existing
-
-  const local = process.env.FIRESTORE_EMULATOR_HOST || process.env.USE_LOCAL_DB === 'true'
-  if (!local) return null
-
-  await membershipNumbersCollection.createMany(
-    Array.from({ length: 200 }, (_, index) => ({
-      cardNumber: 1500 + index,
-      batchId: 'local-seed',
-    })),
-    tenantId
-  )
-  return membershipNumbersCollection.findFirstAvailable(tenantId)
-}
+import { allocateMembershipNumber, markNumberAssigned } from '@/lib/card-number-alloc'
+import { hasPhysicalCard, passTypesOf, venueOffersCardType } from '@/lib/card-type'
 
 export async function GET(request: NextRequest) {
   try {
@@ -129,10 +114,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Member or plan does not belong to this venue' }, { status: 403 })
     }
 
+    if (!venueOffersCardType(passTypesOf(tenant.passTypes), cardType)) {
+      return NextResponse.json(
+        { error: 'This venue does not offer that pass type. Choose one of the options on the signup form.' },
+        { status: 400 }
+      )
+    }
+
     const staffOnlyIssue =
       paymentMethod === 'COMPLIMENTARY' ||
-      isManualPaymentMethod(paymentMethod) ||
-      isZeroPrice(subscriptionPlan.price)
+      isManualPaymentMethod(paymentMethod)
+
+    const freePlan = isZeroPrice(subscriptionPlan.price)
 
     if (staffOnlyIssue) {
       const { error: authError } = await requireAdmin(request)
@@ -142,7 +135,10 @@ export async function POST(request: NextRequest) {
       if (adminIssued !== true) {
         return NextResponse.json({ error: ADMIN_ONLY_ISSUE_MESSAGE }, { status: 403 })
       }
-    } else {
+    } else if (!freePlan) {
+      if (!isOnlinePaymentMethod(paymentMethod)) {
+        return NextResponse.json({ error: 'Choose a payment method' }, { status: 400 })
+      }
       const methodError = onlinePaymentMethodError(paymentMethod, await publicPaymentOptions(tenant))
       if (methodError) {
         return NextResponse.json({ error: methodError }, { status: 400 })
@@ -160,34 +156,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: credits.error }, { status: credits.status })
     }
     
-    const availableNumber = await nextCardNumber(tenant.id)
-    
-    if (!availableNumber) {
-      return NextResponse.json(
-        { error: 'No card numbers available. Please import more numbers.' },
-        { status: 400 }
-      )
+    const allocated = await allocateMembershipNumber(tenant, cardType)
+    if (!allocated.ok) {
+      return NextResponse.json({ error: allocated.error }, { status: allocated.status })
     }
+    const availableNumber = allocated.number
     
-    await membershipNumbersCollection.update(availableNumber.id, {
-      isAssigned: true,
-      assignedAt: new Date()
-    })
+    await markNumberAssigned(availableNumber)
     
     const isComplimentary = paymentMethod === 'COMPLIMENTARY'
-    const freePlan = isZeroPrice(subscriptionPlan.price)
     const freeIssue = isComplimentary || freePlan
     const collectedNow = freeIssue || isManualPaymentMethod(paymentMethod)
     const recordedMethod =
-      isComplimentary || (freePlan && isOnlinePaymentMethod(paymentMethod))
-        ? 'COMPLIMENTARY'
+      isComplimentary || freePlan
+        ? isManualPaymentMethod(paymentMethod)
+          ? paymentMethod
+          : 'COMPLIMENTARY'
         : paymentMethod
+    if (!recordedMethod) {
+      return NextResponse.json({ error: 'Choose a payment method' }, { status: 400 })
+    }
     const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
       tenantId: tenant.id,
       memberId,
       membershipNumberId: availableNumber.id,
       subscriptionPlanId,
-      cardType: cardType as 'QR_CODE' | 'PHYSICAL_CARD',
+      cardType,
       status: collectedNow ? 'PAID' : 'PENDING_PAYMENT',
       paymentMethod: recordedMethod,
       paymentStatus: collectedNow ? 'COMPLETED' : 'PENDING',
@@ -199,7 +193,7 @@ export async function POST(request: NextRequest) {
     
     const membership = await membershipsCollection.create(membershipData)
     
-    if (cardType === 'PHYSICAL_CARD') {
+    if (hasPhysicalCard(cardType)) {
       const magstripeData = await formatMagstripeData(availableNumber.cardNumber, tenant.id)
       
       await cardIssuancesCollection.create({
@@ -263,7 +257,7 @@ export async function POST(request: NextRequest) {
       membershipId: membership.id,
       amount: subscriptionPlan.price,
       currency: subscriptionPlan.currency,
-      paymentMethod,
+      paymentMethod: recordedMethod,
     })
     
     const result = await membershipsCollection.findByIdWithRelations(membership.id)

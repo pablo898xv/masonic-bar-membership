@@ -7,6 +7,15 @@ import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import type { PaymentOptionsView } from '@/components/payment-method-picker'
 import { isManualPaymentMethod } from '@/lib/payment-methods'
+import {
+  PASS_TYPE_OPTIONS,
+  creditsNeeded,
+  defaultCardType,
+  hasPhysicalCard,
+  offeredCardTypes,
+  passTypesOf,
+  type VenuePassTypes,
+} from '@/lib/card-type'
 
 interface Member {
   id: string
@@ -39,6 +48,7 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
   
   const [selectedPlan, setSelectedPlan] = useState('')
   const [cardType, setCardType] = useState('QR_CODE')
+  const [passTypes, setPassTypes] = useState<VenuePassTypes>(passTypesOf())
   const [paymentMethod, setPaymentMethod] = useState('OPEN_BANKING')
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
   const [payments, setPayments] = useState<PaymentOptionsView>({
@@ -49,7 +59,8 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
   })
   const isComplimentary = paymentMethod === 'COMPLIMENTARY'
   const collectedNow = isComplimentary || isManualPaymentMethod(paymentMethod)
-  const outOfCredits = creditBalance !== null && creditBalance < 1
+  const needed = creditsNeeded(cardType)
+  const outOfCredits = creditBalance !== null && creditBalance < needed
   const existingCard = member?.memberships?.find((item) => item.status !== 'CANCELLED')
 
   useEffect(() => {
@@ -72,6 +83,9 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
         setCreditBalance(
           typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
         )
+        const nextPassTypes = passTypesOf(tenantData.tenant?.passTypes)
+        setPassTypes(nextPassTypes)
+        setCardType(defaultCardType(nextPassTypes))
         if (tenantData.tenant?.payments) {
           const next = tenantData.tenant.payments
           setPayments(next)
@@ -240,13 +254,15 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                 />
 
                 <Select
-                  label="Card Type"
+                  label="Pass type"
                   value={cardType}
                   onChange={(e) => setCardType(e.target.value)}
-                  options={[
-                    { value: 'QR_CODE', label: 'QR Code (Digital Wallet Pass - Instant Issue)' },
-                    { value: 'PHYSICAL_CARD', label: 'Physical Magstripe Card (Requires Encoding)' }
-                  ]}
+                  options={PASS_TYPE_OPTIONS.filter((option) =>
+                    offeredCardTypes(passTypes).includes(option.value)
+                  ).map((option) => ({
+                    value: option.value,
+                    label: `${option.label} — ${option.hint}`,
+                  }))}
                 />
 
                 <Select
@@ -268,7 +284,8 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
 
                 {isComplimentary && (
                   <p className="text-sm text-blue-800 bg-blue-50 p-3 rounded-lg">
-                    Complimentary memberships are not charged. The membership will be activated immediately and the card will go to the encode queue.
+                    Complimentary memberships are not charged. The membership will be activated immediately
+                    {hasPhysicalCard(cardType) ? ' and a plastic card will go to the encode queue' : ''}.
                   </p>
                 )}
                 {isManualPaymentMethod(paymentMethod) && (
@@ -290,7 +307,11 @@ export default function PurchaseMembershipPage({ params }: { params: Promise<{ i
                       Valid for {selectedPlanDetails.durationYears} year{selectedPlanDetails.durationYears > 1 ? 's' : ''}
                     </div>
                     <p className="mt-2 text-sm text-yellow-700 bg-yellow-50 p-2 rounded">
-                      Uses 1 issuance credit{creditBalance !== null ? ` (${creditBalance} remaining)` : ''}. The card will be added to the encoding queue{collectedNow ? '' : ' after payment'}.
+                      Uses {needed} issuance credit{needed === 1 ? '' : 's'}
+                      {creditBalance !== null ? ` (${creditBalance} remaining)` : ''}.
+                      {hasPhysicalCard(cardType)
+                        ? ` The plastic card will be added to the encoding queue${collectedNow ? '' : ' after payment'}.`
+                        : ' The digital pass is issued immediately after payment.'}
                     </p>
                     {outOfCredits && (
                       <p className="mt-2 text-sm text-red-700 bg-red-50 p-2 rounded">

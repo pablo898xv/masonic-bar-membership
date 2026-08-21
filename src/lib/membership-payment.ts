@@ -16,6 +16,7 @@ import {
   type MembershipPaymentMethod,
 } from '@/lib/payment-methods'
 import { onlinePaymentMethodError, publicPaymentOptions } from '@/lib/payment-options'
+import { isRenewalPayment } from '@/lib/renewal'
 
 export function latestOpenMembershipPayment(transactions: PaymentTransaction[]) {
   return (
@@ -85,6 +86,7 @@ export async function ensurePendingMembershipPayment(options: {
   amount: number
   currency: string
   paymentMethod: MembershipPaymentMethod
+  metadata?: Record<string, unknown>
 }) {
   const existing = latestOpenMembershipPayment(
     await paymentTransactionsCollection.findByMembershipId(options.membershipId)
@@ -95,6 +97,7 @@ export async function ensurePendingMembershipPayment(options: {
       currency: options.currency,
       paymentMethod: options.paymentMethod,
       provider: paymentProviderFor(options.paymentMethod),
+      metadata: { ...(existing.metadata || {}), ...(options.metadata || {}) },
     })
   }
 
@@ -106,6 +109,7 @@ export async function ensurePendingMembershipPayment(options: {
     paymentMethod: options.paymentMethod,
     provider: paymentProviderFor(options.paymentMethod),
     status: 'PENDING',
+    metadata: options.metadata,
   })
 }
 
@@ -119,11 +123,19 @@ export async function setMembershipPaymentMethod(
 
   const membership = await membershipsCollection.findById(membershipId)
   if (!membership) return { ok: false as const, status: 404, error: 'Membership not found' }
-  if (membership.status !== 'PENDING_PAYMENT') {
+  const openPayment = latestOpenMembershipPayment(
+    await paymentTransactionsCollection.findByMembershipId(membershipId)
+  )
+  const renewing = isRenewalPayment(openPayment)
+  if (membership.status !== 'PENDING_PAYMENT' && !renewing) {
     return { ok: false as const, status: 400, error: 'Only a pending payment can be changed.' }
   }
 
-  const plan = await subscriptionPlansCollection.findById(membership.subscriptionPlanId)
+  const planId =
+    typeof openPayment?.metadata?.subscriptionPlanId === 'string'
+      ? openPayment.metadata.subscriptionPlanId
+      : membership.subscriptionPlanId
+  const plan = await subscriptionPlansCollection.findById(planId)
   if (!plan) return { ok: false as const, status: 404, error: 'Subscription plan not found' }
 
   const tenant = await tenantsCollection.findById(membership.tenantId)
@@ -162,7 +174,11 @@ export async function markMembershipPaid(
 ) {
   const membership = await membershipsCollection.findById(membershipId)
   if (!membership) return { ok: false as const, status: 404, error: 'Membership not found' }
-  if (membership.status !== 'PENDING_PAYMENT') {
+  const openRenewal = latestOpenMembershipPayment(
+    await paymentTransactionsCollection.findByMembershipId(membershipId)
+  )
+  const renewing = isRenewalPayment(openRenewal)
+  if (membership.status !== 'PENDING_PAYMENT' && !renewing) {
     return { ok: false as const, status: 400, error: 'This membership is not awaiting payment.' }
   }
 
@@ -186,12 +202,12 @@ export async function markMembershipPaid(
     }
   }
 
-  const plan = await subscriptionPlansCollection.findById(membership.subscriptionPlanId)
+  const planId =
+    typeof openRenewal?.metadata?.subscriptionPlanId === 'string'
+      ? openRenewal.metadata.subscriptionPlanId
+      : membership.subscriptionPlanId
+  const plan = await subscriptionPlansCollection.findById(planId)
   if (!plan) return { ok: false as const, status: 404, error: 'Subscription plan not found' }
-
-  const open = latestOpenMembershipPayment(
-    await paymentTransactionsCollection.findByMembershipId(membershipId)
-  )
   const amount = collected === 'COMPLIMENTARY' ? 0 : plan.price
   const provider = collected === 'COMPLIMENTARY' ? 'COMPLIMENTARY' : 'MANUAL'
   const metadata = {
@@ -201,14 +217,14 @@ export async function markMembershipPaid(
     reason: collected === 'COMPLIMENTARY' ? 'complimentary' : undefined,
   }
 
-  if (open) {
-    await paymentTransactionsCollection.update(open.id, {
+  if (openRenewal) {
+    await paymentTransactionsCollection.update(openRenewal.id, {
       paymentMethod: collected,
       provider,
       status: 'COMPLETED',
       amount,
       currency: plan.currency,
-      metadata: { ...(open.metadata || {}), ...metadata },
+      metadata: { ...(openRenewal.metadata || {}), ...metadata },
     })
   } else {
     await paymentTransactionsCollection.create({

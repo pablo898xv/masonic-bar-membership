@@ -9,11 +9,13 @@ import { Badge } from '@/components/ui/badge'
 import { Modal } from '@/components/ui/modal'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
 import { isMsrx6Cancelled } from '@/lib/msrx6/device'
+import { withMagstripeSentinels } from '@/lib/msrx6/protocol'
 
 interface CardNumber {
   id: string
   cardNumber: number
   batchId?: string
+  pool?: 'PHYSICAL' | 'QR'
   isAssigned: boolean
   assignedAt?: string
   magstripeData: string
@@ -34,7 +36,7 @@ interface CardNumber {
 
 export default function CardNumbersPage() {
   const [cardNumbers, setCardNumbers] = useState<CardNumber[]>([])
-  const [stats, setStats] = useState({ total: 0, assigned: 0, available: 0 })
+  const [stats, setStats] = useState({ total: 0, assigned: 0, available: 0, qrTotal: 0 })
   const [loading, setLoading] = useState(true)
   const [showImportModal, setShowImportModal] = useState(false)
   const [importData, setImportData] = useState({ startNumber: '', endNumber: '', batchId: '' })
@@ -65,7 +67,7 @@ export default function CardNumbersPage() {
       const data = await res.json()
       
       setCardNumbers(data.cardNumbers || [])
-      setStats(data.stats || { total: 0, assigned: 0, available: 0 })
+      setStats(data.stats || { total: 0, assigned: 0, available: 0, qrTotal: 0 })
       setPagination(data.pagination || { page: 1, total: 0, totalPages: 0 })
     } catch (error) {
       console.error('Error fetching card numbers:', error)
@@ -172,7 +174,9 @@ export default function CardNumbersPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Card Numbers</h1>
-          <p className="text-gray-500 mt-1">Manage membership card number inventory</p>
+          <p className="text-gray-500 mt-1">
+            Printed physical stock. QR-only memberships use a separate range set in Venue settings, so they do not take these numbers.
+          </p>
         </div>
         <Button onClick={() => setShowImportModal(true)} className="w-full sm:w-auto">
           <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -183,12 +187,12 @@ export default function CardNumbersPage() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-4">
             <div className="text-center">
               <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
-              <p className="text-sm text-gray-500">Total Numbers</p>
+              <p className="text-sm text-gray-500">Physical stock</p>
             </div>
           </CardContent>
         </Card>
@@ -196,7 +200,7 @@ export default function CardNumbersPage() {
           <CardContent className="pt-4">
             <div className="text-center">
               <p className="text-2xl font-bold text-green-600">{stats.available}</p>
-              <p className="text-sm text-gray-500">Available</p>
+              <p className="text-sm text-gray-500">Physical available</p>
             </div>
           </CardContent>
         </Card>
@@ -204,7 +208,15 @@ export default function CardNumbersPage() {
           <CardContent className="pt-4">
             <div className="text-center">
               <p className="text-2xl font-bold text-blue-600">{stats.assigned}</p>
-              <p className="text-sm text-gray-500">Assigned</p>
+              <p className="text-sm text-gray-500">Physical assigned</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-gray-900">{stats.qrTotal}</p>
+              <p className="text-sm text-gray-500">QR-only numbers</p>
             </div>
           </CardContent>
         </Card>
@@ -261,6 +273,7 @@ export default function CardNumbersPage() {
                     onClick={() => {
                       setEncodeMessage(null)
                       setSelected(num)
+                      if (num.pool === 'QR') return
                       if (num.canEncode !== false && writer.connected) {
                         void handleWriterEncode(num)
                       }
@@ -279,23 +292,29 @@ export default function CardNumbersPage() {
                     )}
                     <Badge
                       variant={
-                        !num.isAssigned
-                          ? 'success'
-                          : num.membership?.status === 'PENDING_PAYMENT'
-                            ? 'warning'
-                            : 'info'
+                        num.pool === 'QR'
+                          ? 'default'
+                          : !num.isAssigned
+                            ? 'success'
+                            : num.membership?.status === 'PENDING_PAYMENT'
+                              ? 'warning'
+                              : 'info'
                       }
                       className="mt-1"
                     >
-                      {!num.isAssigned
-                        ? 'Available'
-                        : num.membership?.status === 'PENDING_PAYMENT'
-                          ? 'Unpaid'
-                          : 'Assigned'}
+                      {num.pool === 'QR'
+                        ? 'QR only'
+                        : !num.isAssigned
+                          ? 'Available'
+                          : num.membership?.status === 'PENDING_PAYMENT'
+                            ? 'Unpaid'
+                            : 'Assigned'}
                     </Badge>
-                    <p className="text-xs text-blue-700 mt-2">
-                      {num.isAssigned && num.canEncode === false ? 'Awaiting payment' : 'Encode'}
-                    </p>
+                    {num.pool !== 'QR' && (
+                      <p className="text-xs text-blue-700 mt-2">
+                        {num.isAssigned && num.canEncode === false ? 'Awaiting payment' : 'Encode'}
+                      </p>
+                    )}
                   </button>
                 ))}
               </div>
@@ -334,9 +353,37 @@ export default function CardNumbersPage() {
       <Modal
         isOpen={!!selected}
         onClose={closeEncodeModal}
-        title={selected ? `Encode card #${selected.cardNumber}` : 'Encode card'}
+        title={
+          selected
+            ? selected.pool === 'QR'
+              ? `QR number #${selected.cardNumber}`
+              : `Encode card #${selected.cardNumber}`
+            : 'Encode card'
+        }
       >
-        {selected && selected.canEncode === false ? (
+        {selected && selected.pool === 'QR' ? (
+          <div className="space-y-4">
+            {selected.membership?.member && (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-500">Assigned to</p>
+                <p className="font-medium">{selected.membership.member.name}</p>
+              </div>
+            )}
+            <p className="text-sm text-gray-600">
+              This number is from the QR-only range. It is not printed physical stock. Encode a plastic card from the membership page if you later issue one — that writes this number to a blank card rather than using imported stock.
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <Button variant="secondary" onClick={closeEncodeModal}>
+                Close
+              </Button>
+              {selected.membership?.id && (
+                <Link href={`/admin/memberships/${selected.membership.id}`}>
+                  <Button>Open membership</Button>
+                </Link>
+              )}
+            </div>
+          </div>
+        ) : selected && selected.canEncode === false ? (
           <div className="space-y-4">
             {selected.membership?.member && (
               <div className="p-4 bg-gray-50 rounded-lg">
@@ -369,7 +416,7 @@ export default function CardNumbersPage() {
             <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
               <p className="text-sm text-yellow-700">Magstripe data (till swipe):</p>
               <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">
-                {selected.magstripeData}
+                {withMagstripeSentinels(selected.magstripeData)}
               </p>
             </div>
             <p className="text-sm text-gray-600">
@@ -424,7 +471,7 @@ export default function CardNumbersPage() {
       >
         <form onSubmit={handleImport} className="space-y-4">
           <p className="text-sm text-gray-600">
-            Import a sequential range of card numbers. These numbers should match the numbers printed on your physical membership cards.
+            Import a sequential range of numbers printed on your physical membership cards. QR-only memberships do not use this stock — set their starting number in Venue settings.
           </p>
           
           {importResult && (

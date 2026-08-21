@@ -1,24 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { 
-  membershipsCollection, 
-  membersCollection, 
-  membershipNumbersCollection, 
+import {
+  membershipsCollection,
+  membersCollection,
+  membershipNumbersCollection,
   subscriptionPlansCollection,
-  cardIssuancesCollection,
   tenantsCollection,
   paymentTransactionsCollection,
-  Membership
 } from '@/lib/db'
-import { v4 as uuidv4 } from 'uuid'
-import { formatMagstripeData } from '@/lib/settings'
 import { canAccessMembership, membershipAccessToken, membershipNotFound } from '@/lib/membership-access'
-import { allocateCardShortCode } from '@/lib/card-link'
-import { ensurePendingMembershipPayment } from '@/lib/membership-payment'
-import { isMembershipPaymentMethod, isOnlinePaymentMethod, ADMIN_ONLY_ISSUE_MESSAGE } from '@/lib/payment-methods'
+import { ensurePendingMembershipPayment, latestOpenMembershipPayment } from '@/lib/membership-payment'
+import { isManualPaymentMethod, isMembershipPaymentMethod, isOnlinePaymentMethod, ADMIN_ONLY_ISSUE_MESSAGE } from '@/lib/payment-methods'
 import { onlinePaymentMethodError, publicPaymentOptions } from '@/lib/payment-options'
 import { fulfillPaidMembership } from '@/lib/fulfill-membership'
 import { isZeroPrice } from '@/lib/money'
 import { getAuthenticatedUser } from '@/lib/auth'
+import { isRenewalPayment, renewalWindowError, renewedExpiryDate } from '@/lib/renewal'
 
 export async function POST(
   request: NextRequest,
@@ -28,7 +24,7 @@ export async function POST(
     const { id } = await params
     const body = await request.json()
     const { subscriptionPlanId, paymentMethod } = body
-    
+
     const existingMembership = await membershipsCollection.findById(id)
     const token = membershipAccessToken(request, body)
 
@@ -36,28 +32,26 @@ export async function POST(
       return membershipNotFound()
     }
     if (!existingMembership) return membershipNotFound()
-    
-    if (!['ACTIVE', 'EXPIRED'].includes(existingMembership.status)) {
-      return NextResponse.json(
-        { error: 'Only active or expired memberships can be renewed' },
-        { status: 400 }
-      )
+
+    const windowError = renewalWindowError(existingMembership)
+    if (windowError) {
+      return NextResponse.json({ error: windowError }, { status: 400 })
     }
-    
+
     const [member, subscriptionPlan, membershipNumber] = await Promise.all([
       membersCollection.findById(existingMembership.memberId),
       subscriptionPlansCollection.findById(subscriptionPlanId),
       membershipNumbersCollection.findById(existingMembership.membershipNumberId),
     ])
-    
+
     if (!member) {
       return NextResponse.json({ error: 'Member not found' }, { status: 404 })
     }
-    
+
     if (!subscriptionPlan || !subscriptionPlan.isActive) {
       return NextResponse.json({ error: 'Subscription plan not found or inactive' }, { status: 404 })
     }
-    
+
     if (!membershipNumber) {
       return NextResponse.json({ error: 'Membership number not found' }, { status: 404 })
     }
@@ -67,68 +61,84 @@ export async function POST(
       return NextResponse.json({ error: 'Venue not found' }, { status: 404 })
     }
     const options = await publicPaymentOptions(tenant)
-    const pendingMethod = isMembershipPaymentMethod(paymentMethod)
+    const freePlan = isZeroPrice(subscriptionPlan.price)
+    let pendingMethod = isMembershipPaymentMethod(paymentMethod)
       ? paymentMethod
       : isMembershipPaymentMethod(existingMembership.paymentMethod)
         ? existingMembership.paymentMethod
         : options.defaultMethod
-    if (isOnlinePaymentMethod(pendingMethod) && !isZeroPrice(subscriptionPlan.price)) {
+    if (freePlan && !isManualPaymentMethod(pendingMethod)) {
+      pendingMethod = 'COMPLIMENTARY'
+    }
+    if (isOnlinePaymentMethod(pendingMethod) && !freePlan) {
       const methodError = onlinePaymentMethodError(pendingMethod, options)
       if (methodError) {
         return NextResponse.json({ error: methodError }, { status: 400 })
       }
     }
 
-    const staffOnlyIssue = pendingMethod === 'COMPLIMENTARY' || isZeroPrice(subscriptionPlan.price)
+    const staffOnlyIssue = pendingMethod === 'COMPLIMENTARY' && !freePlan
     if (staffOnlyIssue && !(await getAuthenticatedUser(request))) {
       return NextResponse.json({ error: ADMIN_ONLY_ISSUE_MESSAGE }, { status: 403 })
     }
-    
-    const membershipData: Omit<Membership, 'id' | 'createdAt' | 'updatedAt'> = {
-      tenantId: existingMembership.tenantId,
-      memberId: existingMembership.memberId,
-      membershipNumberId: existingMembership.membershipNumberId,
-      subscriptionPlanId,
-      cardType: existingMembership.cardType,
-      status: 'PENDING_PAYMENT',
-      paymentMethod: pendingMethod,
-      paymentStatus: 'PENDING',
-      tillSystemEnabled: false,
-      accessToken: uuidv4(),
-      shortCode: await allocateCardShortCode(),
-    }
-    
-    const newMembership = await membershipsCollection.create(membershipData)
-    
-    if (existingMembership.cardType === 'PHYSICAL_CARD') {
-      const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, existingMembership.tenantId)
-      
-      await cardIssuancesCollection.create({
-        membershipId: newMembership.id,
-        tenantId: existingMembership.tenantId,
-        queueStatus: 'PENDING',
-        magstripeData,
-        notes: `Renewal of membership ${existingMembership.id}`
-      })
+
+    const fromExpiry = existingMembership.expiryDate || new Date()
+    const nextExpiry = renewedExpiryDate(fromExpiry, subscriptionPlan.durationYears)
+    const renewalMeta = {
+      kind: 'RENEWAL',
+      subscriptionPlanId: subscriptionPlan.id,
+      durationYears: subscriptionPlan.durationYears,
+      fromExpiry: fromExpiry.toISOString(),
+      cardNumber: membershipNumber.cardNumber,
     }
 
-    const freeIssue = pendingMethod === 'COMPLIMENTARY' || isZeroPrice(subscriptionPlan.price)
+    const open = latestOpenMembershipPayment(
+      await paymentTransactionsCollection.findByMembershipId(existingMembership.id)
+    )
+    if (open && !isRenewalPayment(open) && existingMembership.status === 'PENDING_PAYMENT') {
+      return NextResponse.json(
+        { error: 'Finish the outstanding payment on this membership before renewing.' },
+        { status: 400 }
+      )
+    }
+
+    const freeIssue = pendingMethod === 'COMPLIMENTARY' || freePlan
     if (freeIssue) {
-      await paymentTransactionsCollection.create({
-        tenantId: existingMembership.tenantId,
-        membershipId: newMembership.id,
-        amount: 0,
-        currency: subscriptionPlan.currency,
-        paymentMethod: 'COMPLIMENTARY',
-        provider: 'COMPLIMENTARY',
-        status: 'COMPLETED',
-        metadata: { reason: pendingMethod === 'COMPLIMENTARY' ? 'complimentary' : 'free_plan', renewalOf: existingMembership.id },
-      })
-      await fulfillPaidMembership(newMembership.id)
-      const result = await membershipsCollection.findByIdWithRelations(newMembership.id)
+      if (open) {
+        await paymentTransactionsCollection.update(open.id, {
+          amount: 0,
+          currency: subscriptionPlan.currency,
+          paymentMethod: 'COMPLIMENTARY',
+          provider: 'COMPLIMENTARY',
+          status: 'COMPLETED',
+          metadata: {
+            ...(open.metadata || {}),
+            ...renewalMeta,
+            reason: pendingMethod === 'COMPLIMENTARY' ? 'complimentary' : 'free_plan',
+          },
+        })
+      } else {
+        await paymentTransactionsCollection.create({
+          tenantId: existingMembership.tenantId,
+          membershipId: existingMembership.id,
+          amount: 0,
+          currency: subscriptionPlan.currency,
+          paymentMethod: 'COMPLIMENTARY',
+          provider: 'COMPLIMENTARY',
+          status: 'COMPLETED',
+          metadata: {
+            ...renewalMeta,
+            reason: pendingMethod === 'COMPLIMENTARY' ? 'complimentary' : 'free_plan',
+          },
+        })
+      }
+      await fulfillPaidMembership(existingMembership.id)
+      const result = await membershipsCollection.findByIdWithRelations(existingMembership.id)
       return NextResponse.json({
         ...result,
+        membership: result?.membership,
         previousMembershipId: existingMembership.id,
+        nextExpiry,
         freeIssue: true,
         paymentRequired: null,
       }, { status: 201 })
@@ -136,22 +146,25 @@ export async function POST(
 
     await ensurePendingMembershipPayment({
       tenantId: existingMembership.tenantId,
-      membershipId: newMembership.id,
+      membershipId: existingMembership.id,
       amount: subscriptionPlan.price,
       currency: subscriptionPlan.currency,
       paymentMethod: pendingMethod,
+      metadata: renewalMeta,
     })
-    
-    const result = await membershipsCollection.findByIdWithRelations(newMembership.id)
-    
+
+    const result = await membershipsCollection.findByIdWithRelations(existingMembership.id)
+
     return NextResponse.json({
       ...result,
+      membership: result?.membership,
       previousMembershipId: existingMembership.id,
+      nextExpiry,
       paymentRequired: {
         amount: subscriptionPlan.price,
         currency: subscriptionPlan.currency,
-        membershipId: newMembership.id
-      }
+        membershipId: existingMembership.id,
+      },
     }, { status: 201 })
   } catch (error) {
     console.error('Error renewing membership:', error)

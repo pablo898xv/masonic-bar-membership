@@ -52,13 +52,33 @@ export async function isGoogleWalletConfigured(): Promise<boolean> {
   return Boolean(await loadServiceAccount())
 }
 
-function classId(issuerId: string, classSuffix: string) {
-  return `${issuerId}.${classSuffix || 'membership'}`
+function walletIdPart(value: string, fallback = 'venue') {
+  const cleaned = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+  return cleaned.slice(0, 48) || fallback
 }
 
-function objectId(issuerId: string, membershipId: string) {
-  const suffix = `m-${membershipId}`.replace(/[^A-Za-z0-9._-]/g, '-')
-  return `${issuerId}.${suffix}`
+function classId(
+  issuerId: string,
+  classSuffix: string,
+  tenant?: { id: string; slug?: string } | null
+) {
+  const base = walletIdPart(classSuffix || 'membership', 'membership')
+  if (!tenant) return `${issuerId}.${base}`
+  return `${issuerId}.${base}-${walletIdPart(tenant.slug || tenant.id)}`
+}
+
+function objectId(
+  issuerId: string,
+  membershipId: string,
+  tenant?: { id: string; slug?: string } | null
+) {
+  const membership = `m-${membershipId}`.replace(/[^A-Za-z0-9._-]/g, '-')
+  if (!tenant) return `${issuerId}.${membership}`
+  return `${issuerId}.${walletIdPart(tenant.slug || tenant.id)}-${membership}`
 }
 
 function walletOrigins(extra: string[] = []) {
@@ -81,9 +101,9 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
     throw new Error('Google Wallet is not configured')
   }
 
-  const genericClassId = classId(issuerId, settings.googleWalletClassSuffix.trim())
-  const genericObjectId = objectId(issuerId, input.membershipId)
   const tenant = input.tenantId ? await tenantsCollection.findById(input.tenantId) : null
+  const genericClassId = classId(issuerId, settings.googleWalletClassSuffix.trim(), tenant)
+  const genericObjectId = objectId(issuerId, input.membershipId, tenant)
   const venueName = tenant?.name?.trim() || 'Membership Manager'
   const barcodeValue = await formatMembershipQRData(input.cardNumber, input.tenantId, {
     membershipId: input.membershipId,
@@ -140,6 +160,10 @@ export async function createGoogleWalletSaveUrl(input: GoogleWalletPassInput): P
       { id: 'card_number', header: 'CARD NUMBER', body: String(input.cardNumber) },
       { id: 'valid_until', header: 'VALID UNTIL', body: expiryLabel },
     ],
+    groupingInfo: {
+      groupingId: tenant?.id || 'platform',
+      sortIndex: 1,
+    },
   }
 
   if (wordmarkUrl) {

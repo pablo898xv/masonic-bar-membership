@@ -48,6 +48,9 @@ yarn-error.log*
 # local JSON database used when Firebase is not configured
 .data/
 
+# Firestore/Auth emulator point-in-time backups (member PII)
+/backups/
+
 # vercel
 .vercel
 

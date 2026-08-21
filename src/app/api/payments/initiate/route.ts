@@ -14,11 +14,11 @@ import { fulfillPaidMembership } from '@/lib/fulfill-membership'
 import { belongsToTenant, requireTenant, creditorForTenant, assertCreditsAvailable, unchargedFormats } from '@/lib/tenancy'
 import { canAccessMembership, membershipNotFound } from '@/lib/membership-access'
 import { ensurePendingMembershipPayment, latestOpenMembershipPayment } from '@/lib/membership-payment'
-import { isManualPaymentMethod, isOnlinePaymentMethod, ADMIN_ONLY_ISSUE_MESSAGE } from '@/lib/payment-methods'
+import { isManualPaymentMethod, isOnlinePaymentMethod } from '@/lib/payment-methods'
 import { publicOrigin } from '@/lib/public-url'
 import { isZeroPrice } from '@/lib/money'
-import { requireAdmin } from '@/lib/auth'
 import { signupCampaignPath, signupTokenFromRequest } from '@/lib/signup-campaigns'
+import { isRenewalPayment } from '@/lib/renewal'
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,21 +38,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Membership not found' }, { status: 404 })
     }
 
-    if (membership.paymentMethod === 'COMPLIMENTARY') {
+    const openPayment = latestOpenMembershipPayment(
+      await paymentTransactionsCollection.findByMembershipId(membershipId)
+    )
+    const renewing = isRenewalPayment(openPayment)
+
+    if (membership.paymentMethod === 'COMPLIMENTARY' && !renewing) {
       return NextResponse.json(
         { error: 'Complimentary memberships do not require payment' },
         { status: 400 }
       )
     }
 
-    if (isManualPaymentMethod(membership.paymentMethod)) {
+    if (isManualPaymentMethod(membership.paymentMethod) && !renewing) {
       return NextResponse.json(
         { error: 'This membership is set to cash or in person. Mark it paid from the membership page.' },
         { status: 400 }
       )
     }
 
-    if (membership.status !== 'PENDING_PAYMENT') {
+    if (membership.status !== 'PENDING_PAYMENT' && !renewing) {
       return NextResponse.json(
         { error: 'Payment already processed or membership not in pending state' },
         { status: 400 }
@@ -70,9 +75,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: credits.error }, { status: credits.status })
     }
 
+    const planId =
+      typeof openPayment?.metadata?.subscriptionPlanId === 'string'
+        ? openPayment.metadata.subscriptionPlanId
+        : membership.subscriptionPlanId
     const [member, subscriptionPlan] = await Promise.all([
       membersCollection.findById(membership.memberId),
-      subscriptionPlansCollection.findById(membership.subscriptionPlanId),
+      subscriptionPlansCollection.findById(planId),
     ])
 
     if (!member || !subscriptionPlan) {
@@ -85,15 +94,15 @@ export async function POST(request: NextRequest) {
       returnUrl ||
       `${origin}/membership/card/${membershipId}?token=${encodeURIComponent(cardToken)}&paid=1`
     const signupToken = signupTokenFromRequest(request)
-    const cancelUrl = signupToken
-      ? `${origin}${signupCampaignPath(signupToken)}?cancelled=true`
-      : `${origin}/membership/register?cancelled=true`
+    const cancelUrl = renewing
+      ? `${origin}/membership/renew?id=${encodeURIComponent(membershipId)}${
+          cardToken ? `&token=${encodeURIComponent(cardToken)}` : ''
+        }`
+      : signupToken
+        ? `${origin}${signupCampaignPath(signupToken)}?cancelled=true`
+        : `${origin}/membership/register?cancelled=true`
 
     if (isZeroPrice(subscriptionPlan.price)) {
-      const { error: authError } = await requireAdmin(request)
-      if (authError) {
-        return NextResponse.json({ error: ADMIN_ONLY_ISSUE_MESSAGE }, { status: 403 })
-      }
       const open = latestOpenMembershipPayment(
         await paymentTransactionsCollection.findByMembershipId(membershipId)
       )
@@ -213,7 +222,12 @@ export async function POST(request: NextRequest) {
         provider: 'STRIPE',
         externalId: paymentResult.paymentId,
         status: 'PENDING',
-        metadata: { kind: 'membership', processor: processor.id, returnUrl: successUrl },
+        metadata: {
+          ...(pending.metadata || {}),
+          kind: typeof pending.metadata?.kind === 'string' ? pending.metadata.kind : 'membership',
+          processor: processor.id,
+          returnUrl: successUrl,
+        },
       })
 
       await membershipsCollection.update(membershipId, {
@@ -269,7 +283,7 @@ export async function POST(request: NextRequest) {
       provider: 'HOPE_MACY',
       externalId: paymentResult.paymentId,
       status: 'PENDING',
-      metadata: paymentResult.metadata,
+      metadata: { ...(paymentResult.metadata || {}), ...(pending.metadata || {}) },
     })
 
     await membershipsCollection.update(membershipId, {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { membershipsCollection } from '@/lib/db'
 import { enableCardFormat } from '@/lib/fulfill-membership'
 import { belongsToTenant, requireTenant } from '@/lib/tenancy'
+import { passTypesOf, venueAllowsFormat } from '@/lib/card-type'
 
 export async function POST(
   request: NextRequest,
@@ -21,6 +22,12 @@ export async function POST(
     const format = body.format === 'PHYSICAL_CARD' ? 'PHYSICAL_CARD' : body.format === 'QR_CODE' ? 'QR_CODE' : null
     if (!format) {
       return NextResponse.json({ error: 'format must be QR_CODE or PHYSICAL_CARD' }, { status: 400 })
+    }
+    if (!venueAllowsFormat(passTypesOf(tenant.passTypes), format)) {
+      return NextResponse.json(
+        { error: 'This venue does not offer that pass type.' },
+        { status: 400 }
+      )
     }
 
     const result = await enableCardFormat(id, format)

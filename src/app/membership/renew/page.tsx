@@ -15,12 +15,15 @@ import {
   selectableTileClass,
   type PaymentOptionsView,
 } from '@/components/payment-method-picker'
+import { formatPlanPrice, isZeroPrice } from '@/lib/money'
+import { renewalWindowError, renewedExpiryDate } from '@/lib/renewal'
 
 interface Membership {
   id: string
   cardType: string
   status: string
   expiryDate: string
+  accessToken?: string
   member: {
     name: string
     email: string
@@ -95,8 +98,19 @@ function RenewContent() {
           return
         }
 
+        const windowError = renewalWindowError({
+          status: membershipData.status,
+          expiryDate: membershipData.expiryDate,
+        })
+        if (windowError) {
+          setError(windowError)
+          setMembership(membershipData)
+          setLoading(false)
+          return
+        }
+
         setMembership(membershipData)
-        setPlans(plansData)
+        setPlans(Array.isArray(plansData) ? plansData : [])
         setSelectedPlan(membershipData.subscriptionPlan.id)
         if (brandingRes.ok) {
           const branding = await brandingRes.json()
@@ -115,8 +129,11 @@ function RenewContent() {
     fetchData()
   }, [membershipId, token])
 
+  const selectedPlanDetails = plans.find(p => p.id === selectedPlan)
+  const freePlan = isZeroPrice(selectedPlanDetails?.price)
+
   const handleRenew = async () => {
-    if (!membership || !selectedPlan || !paymentMethod) {
+    if (!membership || !selectedPlan || (!freePlan && !paymentMethod)) {
       setError('Please complete all required fields')
       return
     }
@@ -130,7 +147,7 @@ function RenewContent() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           subscriptionPlanId: selectedPlan,
-          paymentMethod,
+          paymentMethod: freePlan ? undefined : paymentMethod,
           token: token || undefined,
         })
       })
@@ -141,21 +158,27 @@ function RenewContent() {
       }
 
       const renewData = await renewRes.json()
-      const renewed = renewData.membership || renewData.renewal
+      const membershipId = renewData.paymentRequired?.membershipId || renewData.membership?.id || membership.id
       if (!renewData.paymentRequired || renewData.freeIssue) {
-        const token = renewed?.accessToken || ''
-        if (renewed?.id && token) {
-          window.location.href = `/membership/card/${renewed.id}?token=${encodeURIComponent(token)}&paid=1`
+        const accessToken = renewData.membership?.accessToken || membership.accessToken || token || ''
+        if (membershipId && accessToken) {
+          window.location.href = `/membership/card/${membershipId}?token=${encodeURIComponent(accessToken)}&paid=1`
           return
         }
-        router.push(`/membership/payment-complete?membershipId=${renewed?.id || ''}`)
+        router.push(`/membership/payment-complete?membershipId=${membershipId || ''}`)
         return
       }
 
       const paymentRes = await fetch('/api/payments/initiate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ membershipId: renewData.renewal.id, paymentMethod })
+        body: JSON.stringify({
+          membershipId,
+          paymentMethod,
+          returnUrl: `${window.location.origin}/membership/card/${membershipId}${
+            token ? `?token=${encodeURIComponent(token)}&paid=1` : '?paid=1'
+          }`,
+        }),
       })
 
       const paymentData = await paymentRes.json().catch(() => ({}))
@@ -166,7 +189,7 @@ function RenewContent() {
       if (paymentData.redirectUrl) {
         window.location.href = paymentData.redirectUrl
       } else {
-        router.push(`/membership/payment-complete?membershipId=${renewData.renewal.id}`)
+        router.push(`/membership/payment-complete?membershipId=${membershipId}`)
       }
     } catch (err: any) {
       setError(err.message)
@@ -174,7 +197,6 @@ function RenewContent() {
     }
   }
 
-  const selectedPlanDetails = plans.find(p => p.id === selectedPlan)
   const isExpired = membership?.status === 'EXPIRED'
   const daysUntilExpiry = membership?.expiryDate
     ? Math.ceil((new Date(membership.expiryDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -280,26 +302,34 @@ function RenewContent() {
                         </p>
                       </div>
                     </div>
-                    <p className="text-lg font-bold text-gray-900">£{plan.price.toFixed(2)}</p>
+                    <p className="text-lg font-bold text-gray-900">{formatPlanPrice(plan.price)}</p>
                   </label>
                 ))}
               </div>
             </div>
 
-            <div className="border-t border-gray-200 pt-6">
-              <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} options={payments} />
-            </div>
+            {!freePlan && (
+              <div className="border-t border-gray-200 pt-6">
+                <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} options={payments} />
+              </div>
+            )}
 
-            {selectedPlanDetails && (
+            {selectedPlanDetails && membership && (
               <div className="p-4 bg-green-50 rounded-lg border border-green-200">
                 <div className="flex justify-between items-center">
                   <div>
                     <p className="font-medium text-green-800">Renewal Total</p>
                     <p className="text-sm text-green-700">
-                      Your membership will be extended by {selectedPlanDetails.durationYears} year{selectedPlanDetails.durationYears > 1 ? 's' : ''}
+                      Card {membership.membershipNumber.cardNumber} stays the same. Valid until{' '}
+                      {format(
+                        renewedExpiryDate(membership.expiryDate, selectedPlanDetails.durationYears),
+                        'dd MMM yyyy'
+                      )}{' '}
+                      ({selectedPlanDetails.durationYears} year{selectedPlanDetails.durationYears > 1 ? 's' : ''}{' '}
+                      added from your current expiry, not from today).
                     </p>
                   </div>
-                  <p className="text-2xl font-bold text-green-800">£{selectedPlanDetails.price.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-green-800">{formatPlanPrice(selectedPlanDetails.price)}</p>
                 </div>
               </div>
             )}
@@ -311,9 +341,9 @@ function RenewContent() {
             <Button
               onClick={handleRenew}
               loading={submitting}
-              disabled={!selectedPlan || !paymentMethod || (!payments.openBanking && payments.card.length === 0)}
+              disabled={!selectedPlan || (!freePlan && (!paymentMethod || (!payments.openBanking && payments.card.length === 0)))}
             >
-              Pay & Renew
+              {freePlan ? 'Complete renewal' : 'Pay & Renew'}
             </Button>
           </CardFooter>
         </Card>

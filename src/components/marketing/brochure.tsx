@@ -12,6 +12,7 @@ const NAV = [
   { href: '#product', label: 'Product' },
   { href: '#cards', label: 'Cards' },
   { href: '#till', label: 'Till & wallets' },
+  { href: '#renew', label: 'Renewals' },
   { href: '#payments', label: 'Payments' },
   { href: '#api', label: 'API' },
 ]
@@ -24,18 +25,23 @@ const CAPABILITIES: { title: string; body: string; methods?: string[] }[] = [
   },
   {
     title: 'Digital and physical cards',
-    body: 'Encode from the card queue, including batch encode. Additional hardware is required for physical cards.',
+    body: 'Each venue chooses which pass types to sell. QR-only numbers stay off printed stock. Only physical cards go to the encode queue.',
     methods: ['QR cards for phones', 'Physical cards for the till', 'QR and physical together'],
   },
   {
     title: 'Phone wallets',
-    body: 'Members add a pass from their card page.',
+    body: 'Members add a pass from their card page. The pass uses the venue name and logo. Google Wallet keeps each venue’s cards in their own group.',
     methods: ['Apple Wallet', 'Google Wallet'],
   },
   {
     title: 'Payments the venue already uses',
-    body: 'Each venue can take its own payouts.',
-    methods: ['Card checkout', 'Open banking', 'Cash', 'In person', 'Complimentary (staff only)'],
+    body: 'Each venue can take its own payouts. Free plans can sit on the public signup form; complimentary issue stays staff-only.',
+    methods: ['Card checkout', 'Open banking', 'Cash', 'In person', 'Free plans', 'Complimentary (staff only)'],
+  },
+  {
+    title: 'Renewals on the same card',
+    body: 'Members can renew from a month before expiry. The extra year is added from the current expiry date, not from the day they pay. Replacement cards keep the original expiry.',
+    methods: ['Same card number', 'Email and SMS reminders the venue can switch off'],
   },
   {
     title: 'Credits and reports',
@@ -54,7 +60,7 @@ const INTEGRATIONS = [
   { name: 'Google Wallet', detail: 'Save to Wallet' },
   { name: 'Card checkout', detail: 'Pay by card online' },
   { name: 'Open banking', detail: 'Pay from the member’s bank' },
-  { name: 'SMS', detail: 'Welcome and renewal texts' },
+  { name: 'SMS', detail: 'Welcome, card, and renewal texts' },
   { name: 'Email', detail: 'Card and renewal mail' },
   { name: 'Till / POS', detail: 'Scan at the bar' },
   { name: 'Physical cards', detail: 'Encode in venue' },
@@ -139,8 +145,8 @@ export function Brochure() {
             <ul className="mt-4 list-disc space-y-1 pl-5 text-slate-300">
               <li>Digital QR cards</li>
               <li>Physical cards</li>
-              <li>Apple Wallet</li>
-              <li>Google Wallet</li>
+              <li>Apple Wallet and Google Wallet</li>
+              <li>Renewals on the same card number</li>
             </ul>
             <div className="mt-8">
               <Link
@@ -182,17 +188,18 @@ export function Brochure() {
         id="cards"
         eyebrow="Issuing"
         title="Encode a stack of cards, or send a link in minutes."
-        lead="Staff work a queue. Members get a page they can keep on their phone. Card numbers stay unique per venue."
+        lead="Staff work a queue for physical cards. Members get a page they can keep on their phone. Card numbers stay unique per venue, and QR-only numbers do not use printed stock."
       >
         <div className="grid gap-10 lg:grid-cols-2 lg:items-start">
           <QueueShot />
           <div className="space-y-5 text-gray-600">
-            <p>Import or create card numbers, then issue:</p>
+            <p>Each venue turns on the pass types it actually issues:</p>
             <MethodList
               items={['QR only', 'Physical only', 'QR and physical']}
               className="text-sm text-gray-600"
             />
-            <p>The queue shows:</p>
+            <p>The public signup form only shows those options. Physical cards still come from imported stock. QR-only cards take the next number from a separate range the venue sets.</p>
+            <p>The encode queue is for physical cards only. It shows:</p>
             <MethodList
               items={['Ready to encode', 'Encoded', 'Handed over']}
               className="text-sm text-gray-600"
@@ -213,8 +220,11 @@ export function Brochure() {
               <li className="rounded-xl border border-gray-200 bg-white p-4 dark:bg-slate-900">
                 <span className="font-medium text-gray-900">One live card per member</span>
                 <p className="mt-1">Staff still control:</p>
-                <MethodList items={['Complimentary issue', 'In-person issue']} />
-                <p className="mt-1">A person cannot collect a second active card at the same venue.</p>
+                <MethodList items={['Complimentary issue', 'In-person issue', 'Replacement cards']} />
+                <p className="mt-1">
+                  A person cannot collect a second active card at the same venue. A replacement keeps the
+                  original expiry; it does not add a year.
+                </p>
               </li>
             </ul>
           </div>
@@ -225,9 +235,9 @@ export function Brochure() {
         id="till"
         eyebrow="At the bar"
         title="How the till and phone wallets talk to the same card."
-        lead="QR codes can be scanned at the till, or act as a stable link so you can change the destination without reprinting cards."
+        lead="QR codes can be scanned at the till, open a stable link, or run a landing-page script the venue writes. Phone wallets use the venue name and logo."
       >
-        <div className="grid gap-6 md:grid-cols-3">
+        <div className="grid gap-6 md:grid-cols-2">
           <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
             <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Till mode</p>
             <h3 className="mt-2 text-lg font-semibold text-gray-900">Till QR</h3>
@@ -244,9 +254,51 @@ export function Brochure() {
             </p>
           </div>
           <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
+            <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Script mode</p>
+            <h3 className="mt-2 text-lg font-semibold text-gray-900">Custom landing page</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              On scan, a branded page runs JavaScript the venue supplies. Name, mobile, email, and card
+              number are in scope, so a door or till system can check someone in without a new card print.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
             <p className="text-xs font-semibold uppercase tracking-wider text-blue-600">Wallets</p>
             <h3 className="mt-2 text-lg font-semibold text-gray-900">Phone wallets</h3>
-            <MethodList items={['Apple Wallet', 'Google Wallet']} />
+            <p className="mt-2 text-sm text-gray-600">
+              Apple Wallet and Google Wallet use the venue name and logo. Google Wallet keeps each venue’s
+              cards in their own group, so two halls do not sit under one issuer pile.
+            </p>
+          </div>
+        </div>
+      </Section>
+
+      <Section
+        id="renew"
+        eyebrow="Keep the number"
+        title="Renew the same card, from a month before it runs out."
+        lead="The extra year is added from the current expiry date, not from the day the member pays. Staff can renew at the bar. Members use the reminder link."
+      >
+        <div className="grid gap-6 md:grid-cols-3">
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
+            <h3 className="font-semibold text-gray-900">Same card number</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Renewal updates the existing membership. It does not issue a second card or send the
+              physical card back through the encode queue.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
+            <h3 className="font-semibold text-gray-900">When it opens</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Members can renew from one month before expiry, and after it has expired. Paying early
+              still adds the year on to the printed expiry, not to today.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
+            <h3 className="font-semibold text-gray-900">Reminders the venue controls</h3>
+            <p className="mt-2 text-sm text-gray-600">
+              Email and text reminders can be switched on or off per venue. Replacement cards keep the
+              original expiry — they are not a free extra year.
+            </p>
           </div>
         </div>
       </Section>
@@ -261,12 +313,12 @@ export function Brochure() {
           <div className="space-y-4 text-sm text-gray-600">
             <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:bg-slate-900">
               <p className="font-semibold text-gray-900">Online</p>
-              <MethodList items={['Card checkout', 'Open banking']} />
-              <p className="mt-2">When payment completes, the membership is issued and the card is sent.</p>
+              <MethodList items={['Card checkout', 'Open banking', 'Free plans on the public form']} />
+              <p className="mt-2">When payment completes, the membership is issued and the card is sent. A £0 plan can be completed without a card or bank payment.</p>
             </div>
             <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:bg-slate-900">
               <p className="font-semibold text-gray-900">At the venue</p>
-              <p className="mt-1">Staff only, so a public form cannot issue a free card.</p>
+              <p className="mt-1">Staff only, so a public form cannot issue a complimentary card.</p>
               <MethodList items={['Cash', 'In person', 'Complimentary']} />
             </div>
             <div className="rounded-2xl border border-gray-200 bg-white p-5 dark:bg-slate-900">
@@ -326,7 +378,7 @@ export function Brochure() {
             <h3 className="font-semibold text-gray-900">Venues</h3>
             <p className="mt-2 text-sm text-gray-600">Each venue has its own:</p>
             <MethodList
-              items={['Members', 'Plans', 'Card stock', 'Branding', 'Payment settings', 'API keys']}
+              items={['Members', 'Plans', 'Card stock', 'Pass types', 'Branding', 'Payment settings', 'API keys', 'Staff logins']}
             />
             <p className="mt-2 text-sm text-gray-600">Staff switch venue in admin.</p>
           </div>
@@ -334,13 +386,18 @@ export function Brochure() {
             <h3 className="font-semibold text-gray-900">Notifications</h3>
             <p className="mt-2 text-sm text-gray-600">Email:</p>
             <MethodList items={['Welcome', 'Digital card', 'Renewal reminders']} />
-            <p className="mt-2 text-sm text-gray-600">SMS when the venue wants a text with the card link.</p>
+            <p className="mt-2 text-sm text-gray-600">
+              SMS for welcome, digital card, and renewal. Each venue can switch renewal email and renewal
+              texts on or off.
+            </p>
           </div>
           <div className="rounded-2xl border border-gray-200 bg-white p-6 dark:bg-slate-900">
             <h3 className="font-semibold text-gray-900">Branding</h3>
             <p className="mt-2 text-sm text-gray-600">Venue logo and name appear on:</p>
-            <MethodList items={['Signup', 'Digital card', 'Wallet passes']} />
-            <p className="mt-2 text-sm text-gray-600">Members see their venue, not a generic platform.</p>
+            <MethodList items={['Signup', 'Digital card', 'Wallet passes', 'Scan landing page']} />
+            <p className="mt-2 text-sm text-gray-600">
+              Members see their venue, not a generic platform. Google Wallet groups cards by venue.
+            </p>
           </div>
         </div>
       </Section>

@@ -1,7 +1,38 @@
-export type QrCodeMode = 'TILL' | 'URL'
+export type QrCodeMode = 'TILL' | 'URL' | 'SCRIPT'
+
+export const QR_SCAN_SCRIPT_MAX = 100_000
 
 export function qrCodeModeOf(value?: string | null): QrCodeMode {
-  return value === 'URL' ? 'URL' : 'TILL'
+  if (value === 'URL' || value === 'SCRIPT') return value
+  return 'TILL'
+}
+
+export function qrUsesGateway(value?: string | null) {
+  const mode = qrCodeModeOf(value)
+  return mode === 'URL' || mode === 'SCRIPT'
+}
+
+export function qrScanScriptError(script: string) {
+  if (script.length > QR_SCAN_SCRIPT_MAX) {
+    return `Scan script is too long (max ${QR_SCAN_SCRIPT_MAX.toLocaleString()} characters).`
+  }
+  return null
+}
+
+export type QrScanMembership = {
+  name: string
+  email: string
+  mobile: string
+  phone: string
+  cardNumber: number
+  membershipId: string
+  shortCode: string
+  status: string
+  planName: string
+  expiryDate: string | null
+  expiry: string
+  tenant: string
+  tenantSlug: string
 }
 
 export function qrRedirectUrlError(template: string) {
@@ -90,7 +121,7 @@ export function buildMembershipQrPayload(input: {
   tenantSlug?: string
   gatewayUrl?: string
 }) {
-  if (qrCodeModeOf(input.qrCodeMode) === 'URL') {
+  if (qrUsesGateway(input.qrCodeMode)) {
     if (input.gatewayUrl) return input.gatewayUrl
     return qrGatewayPath({
       tenantSlug: input.tenantSlug,

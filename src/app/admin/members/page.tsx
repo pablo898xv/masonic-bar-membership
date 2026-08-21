@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -15,6 +15,58 @@ interface Member {
   phone: string
   createdAt: string
   memberships: { status: string }[]
+}
+
+type SortKey = 'name' | 'email' | 'phone' | 'memberships'
+type SortDir = 'asc' | 'desc'
+
+function membershipSortValue(memberships: { status: string }[] | undefined) {
+  const items = memberships || []
+  const active = items.filter((item) => item.status === 'ACTIVE').length
+  if (active > 0) return 400 + active
+  if (items.some((item) => item.status === 'PENDING_PAYMENT')) return 300
+  if (items.some((item) => item.status === 'PAID')) return 200
+  if (items.some((item) => item.status === 'EXPIRED')) return 100
+  return 0
+}
+
+function compareMembers(a: Member, b: Member, key: SortKey, dir: SortDir) {
+  const mul = dir === 'asc' ? 1 : -1
+  if (key === 'memberships') {
+    return (membershipSortValue(a.memberships) - membershipSortValue(b.memberships)) * mul
+  }
+  return a[key].localeCompare(b[key], 'en', { sensitivity: 'base', numeric: true }) * mul
+}
+
+function SortHeader({
+  label,
+  column,
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  label: string
+  column: SortKey
+  sortKey: SortKey | null
+  sortDir: SortDir
+  onSort: (column: SortKey) => void
+}) {
+  const active = sortKey === column
+  return (
+    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">
+      <button
+        type="button"
+        onClick={() => onSort(column)}
+        className="inline-flex items-center gap-1 hover:text-gray-900"
+        aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}
+      >
+        {label}
+        <span className={`text-[0.65rem] ${active ? 'text-gray-700' : 'text-gray-300'}`} aria-hidden>
+          {active ? (sortDir === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </button>
+    </th>
+  )
 }
 
 function membershipSummaryBadge(memberships: { status: string }[] | undefined) {
@@ -44,6 +96,22 @@ export default function MembersPage() {
   const [newMember, setNewMember] = useState({ name: '', email: '', phone: '' })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+
+  const sortedMembers = useMemo(() => {
+    if (!sortKey) return members
+    return [...members].sort((a, b) => compareMembers(a, b, sortKey, sortDir))
+  }, [members, sortKey, sortDir])
+
+  const handleSort = (column: SortKey) => {
+    if (sortKey === column) {
+      setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(column)
+    setSortDir('asc')
+  }
 
   const fetchMembers = async (page = 1, searchQuery = '') => {
     setLoading(true)
@@ -147,15 +215,21 @@ export default function MembersPage() {
                 <table className="w-full min-w-[40rem]">
                   <thead>
                     <tr className="border-b border-gray-200">
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Name</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Email</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Phone</th>
-                      <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Memberships</th>
+                      <SortHeader label="Name" column="name" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                      <SortHeader label="Email" column="email" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                      <SortHeader label="Phone" column="phone" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                      <SortHeader
+                        label="Memberships"
+                        column="memberships"
+                        sortKey={sortKey}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
                       <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {members.map((member) => (
+                    {sortedMembers.map((member) => (
                       <tr key={member.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="py-3 px-4">
                           <p className="font-medium text-gray-900">{member.name}</p>
@@ -196,7 +270,7 @@ export default function MembersPage() {
               {pagination.totalPages > 1 && (
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mt-4 pt-4 border-t border-gray-200">
                   <p className="text-sm text-gray-500">
-                    Showing {members.length} of {pagination.total} members
+                    Showing {sortedMembers.length} of {pagination.total} members
                   </p>
                   <div className="flex gap-2">
                     <Button

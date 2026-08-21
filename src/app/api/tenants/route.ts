@@ -64,6 +64,7 @@ export async function POST(request: NextRequest) {
       creditBalance: Number.isFinite(credits) ? Math.max(0, Math.floor(credits)) : 0,
       paymentMode: 'OWN',
       magstripePrefix: ';9998',
+      qrNumberStart: 10000,
       ...venueDetailsFromBody(body),
     })
 

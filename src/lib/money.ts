@@ -6,6 +6,11 @@ export function isZeroPrice(amount: number | undefined | null) {
   return !amount
 }
 
+export function formatPlanPrice(amount: number | undefined | null, currency = 'GBP') {
+  if (isZeroPrice(amount)) return 'Free'
+  return formatGbp(Number(amount), currency)
+}
+
 export function methodLabel(method: string) {
   if (method === 'COMPLIMENTARY') return 'Complimentary'
   if (method === 'OPEN_BANKING') return 'Open banking'

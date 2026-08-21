@@ -1,11 +1,14 @@
+import { format } from 'date-fns'
 import {
+  membersCollection,
   membershipsCollection,
   membershipNumbersCollection,
+  subscriptionPlansCollection,
   tenantsCollection,
   type Membership,
 } from '@/lib/db'
 import { membershipCardUrl } from '@/lib/card-link'
-import { fillQrRedirectUrl, qrCodeModeOf, qrRedirectUrlError } from '@/lib/qr-payload'
+import { fillQrRedirectUrl, qrCodeModeOf, qrRedirectUrlError, type QrScanMembership } from '@/lib/qr-payload'
 import { findTenantByPublicStub } from '@/lib/tenancy'
 
 const SHORT_CODE = /^[0-9A-Za-z]{6,16}$/
@@ -56,6 +59,40 @@ export async function resolveQrMembership(parts: string[]) {
   }
 
   return null
+}
+
+export async function qrScanLanding(membership: Membership) {
+  const [tenant, membershipNumber, member, plan] = await Promise.all([
+    tenantsCollection.findById(membership.tenantId),
+    membershipNumbersCollection.findById(membership.membershipNumberId),
+    membersCollection.findById(membership.memberId),
+    subscriptionPlansCollection.findById(membership.subscriptionPlanId),
+  ])
+
+  const phone = member?.phone?.trim() || ''
+  const expiryDate = membership.expiryDate ? new Date(membership.expiryDate) : null
+
+  const payload: QrScanMembership = {
+    name: member?.name?.trim() || '',
+    email: member?.email?.trim() || '',
+    mobile: phone,
+    phone,
+    cardNumber: membershipNumber?.cardNumber ?? 0,
+    membershipId: membership.id,
+    shortCode: membership.shortCode || '',
+    status: membership.status,
+    planName: plan?.name || '',
+    expiryDate: expiryDate ? expiryDate.toISOString() : null,
+    expiry: expiryDate ? format(expiryDate, 'dd MMM yyyy') : '',
+    tenant: tenant?.name?.trim() || '',
+    tenantSlug: tenant?.slug || '',
+  }
+
+  return {
+    tenant,
+    payload,
+    script: tenant?.qrScanScript || '',
+  }
 }
 
 export async function qrGatewayResponse(membership: Membership) {

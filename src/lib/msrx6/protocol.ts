@@ -88,6 +88,15 @@ export function stripSentinels(value: string): string {
   return value.trim().replace(/^[%;+]/, '').replace(/\?+$/, '')
 }
 
+/** ISO start sentinel + payload + end sentinel `?`, as written on the card and returned by a swipe. */
+export function withMagstripeSentinels(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const start = /^[%;+]/.test(trimmed) ? trimmed[0] : ';'
+  const body = stripSentinels(trimmed)
+  return body ? `${start}${body}?` : `${start}?`
+}
+
 export function magstripePrefixIsNumeric(prefix: string) {
   return /^\d*$/.test(stripSentinels(prefix))
 }

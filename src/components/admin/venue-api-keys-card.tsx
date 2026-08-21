@@ -76,15 +76,13 @@ export function VenueApiKeysCard({ onSaved }: { onSaved?: (text: string) => void
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-gray-600">
-          Third-party systems can issue a membership with a venue API key. They choose whether this platform sends the usual email and SMS, or suppress those so they notify the member themselves. The card download URL can be returned in the response. Card numbers stay unique at this venue; pass <code>createCardNumber: true</code> to enrol a number that is not already in the pool.
+          Third-party systems can issue a membership with a venue API key. They choose whether this platform sends the usual email and SMS, or suppress those so they notify the member themselves. The card download URL can be returned in the response. Omit <code>cardNumber</code> to allocate the next QR-range or physical-stock number for the chosen card type. Pass a number with <code>createCardNumber: true</code> to enrol one that is not already in the pool.
         </p>
         <pre className="text-xs bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-x-auto text-gray-800">{`POST /api/v1/memberships
 Authorization: Bearer mbm_…
 {
   "member": { "name": "Jane Doe", "email": "jane@example.com", "phone": "07123456789" },
   "subscriptionPlanId": "plan_id",
-  "cardNumber": 1500,
-  "createCardNumber": true,
   "cardType": "QR_CODE",
   "notifications": { "email": true, "sms": false },
   "returnCardUrl": true

@@ -11,25 +11,32 @@ import { VenueApiKeysCard } from '@/components/admin/venue-api-keys-card'
 import { VenueSignupCampaignsCard } from '@/components/admin/venue-signup-campaigns-card'
 import { VenueLogoUpload } from '@/components/admin/venue-logo-upload'
 import { Select } from '@/components/ui/select'
-import { buildMembershipQrPayload, fillQrRedirectUrl, qrCodeModeOf, qrGatewayPath } from '@/lib/qr-payload'
+import { buildMembershipQrPayload, fillQrRedirectUrl, qrCodeModeOf, qrGatewayPath, qrUsesGateway, type QrCodeMode } from '@/lib/qr-payload'
 import {
   formatMagstripeTrackList,
   magstripePrefixIsNumeric,
   normalizeMagstripeTracks,
+  withMagstripeSentinels,
   type MagstripeTrack,
 } from '@/lib/msrx6/protocol'
 import { publicAppBaseUrl } from '@/lib/public-url'
+import { PASS_TYPE_OPTIONS, passTypesOf, type VenuePassTypes } from '@/lib/card-type'
 
 type VenueOps = {
   id: string
   slug: string
   magstripePrefix: string
   magstripeTracks: MagstripeTrack[]
-  qrCodeMode: 'TILL' | 'URL'
+  qrCodeMode: QrCodeMode
   qrRedirectUrl: string
+  qrScanScript: string
+  qrNumberStart: number
+  passTypes: VenuePassTypes
   tillSystemApiUrl: string
   tillSystemApiKeySet: boolean
   logoUrl: string
+  renewalEmailEnabled: boolean
+  renewalSmsEnabled: boolean
 }
 
 export default function SettingsPage() {
@@ -41,9 +48,14 @@ export default function SettingsPage() {
     magstripeTracks: [2],
     qrCodeMode: 'TILL',
     qrRedirectUrl: '',
+    qrScanScript: '',
+    qrNumberStart: 10000,
+    passTypes: { qr: true, physical: true, both: false },
     tillSystemApiUrl: '',
     tillSystemApiKeySet: false,
     logoUrl: '',
+    renewalEmailEnabled: true,
+    renewalSmsEnabled: true,
   })
   const [tillApiKey, setTillApiKey] = useState('')
   const [saving, setSaving] = useState<string | null>(null)
@@ -58,11 +70,16 @@ export default function SettingsPage() {
       slug: data.tenant.slug || '',
       magstripePrefix: data.tenant.magstripePrefix || ';9998',
       magstripeTracks: normalizeMagstripeTracks(data.tenant.magstripeTracks),
-      qrCodeMode: data.tenant.qrCodeMode === 'URL' ? 'URL' : 'TILL',
+      qrCodeMode: qrCodeModeOf(data.tenant.qrCodeMode),
       qrRedirectUrl: data.tenant.qrRedirectUrl || '',
+      qrScanScript: data.tenant.qrScanScript || '',
+      qrNumberStart: Number(data.tenant.qrNumberStart) > 0 ? Number(data.tenant.qrNumberStart) : 10000,
+      passTypes: passTypesOf(data.tenant.passTypes),
       tillSystemApiUrl: data.tenant.tillSystemApiUrl || '',
       tillSystemApiKeySet: Boolean(data.tenant.tillSystemApiKeySet),
       logoUrl: data.tenant.logoUrl || '',
+      renewalEmailEnabled: data.tenant.renewalEmailEnabled !== false,
+      renewalSmsEnabled: data.tenant.renewalSmsEnabled !== false,
     })
   }
 
@@ -90,6 +107,15 @@ export default function SettingsPage() {
               ? {
                   qrCodeMode: ops.qrCodeMode,
                   qrRedirectUrl: ops.qrRedirectUrl,
+                  qrScanScript: ops.qrScanScript,
+                  qrNumberStart: ops.qrNumberStart,
+                }
+            : section === 'passes'
+              ? { passTypes: ops.passTypes }
+            : section === 'reminders'
+              ? {
+                  renewalEmailEnabled: ops.renewalEmailEnabled,
+                  renewalSmsEnabled: ops.renewalSmsEnabled,
                 }
             : {
                 magstripePrefix: ops.magstripePrefix.trim() || ';9998',
@@ -204,6 +230,9 @@ export default function SettingsPage() {
         <CardContent>
           <p className="text-sm text-gray-600 mb-4">
             Used on the purchase screens, this admin site, and the Apple/Google Wallet pass.
+            Google Wallet keeps this venue’s cards in their own group. Apple Wallet still stacks them with other
+            Membership Manager cards because they share one platform Pass Type certificate — the pass itself shows
+            this venue’s name and logo.
           </p>
           {ops.id ? (
             <VenueLogoUpload
@@ -233,7 +262,7 @@ export default function SettingsPage() {
           <CardContent>
             <form onSubmit={(event) => saveOps(event, 'magstripe')} className="space-y-4">
               <p className="text-sm text-gray-600">
-                Data written to physical cards for this venue. The prefix is followed by the number printed on the back of the card. Choose which ISO tracks the writer should encode.
+                Data written to physical cards for this venue. The prefix is followed by the number printed on the back of the card, then a <span className="font-mono">?</span> end sentinel. That <span className="font-mono">?</span> is encoded on the magnetic track and comes back when the card is swiped. Choose which ISO tracks the writer should encode.
               </p>
               <div className="grid grid-cols-1 gap-4">
                 <Input
@@ -273,7 +302,7 @@ export default function SettingsPage() {
                     Example card 1500 ({trackLabel})
                   </p>
                   <p className="px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 font-mono text-gray-900">
-                    {ops.magstripePrefix || ';9998'}1500
+                    {withMagstripeSentinels(`${ops.magstripePrefix || ';9998'}1500`)}
                   </p>
                 </div>
               </div>
@@ -322,12 +351,71 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
+          <h2 className="text-lg font-semibold text-gray-900">Pass types</h2>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={(event) => saveOps(event, 'passes')} className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Choose which memberships people can buy on the public signup form. Turn off any this venue does not issue.
+            </p>
+            <div className="space-y-3">
+              {PASS_TYPE_OPTIONS.map((option) => {
+                const key = option.value === 'QR_CODE' ? 'qr' : option.value === 'PHYSICAL_CARD' ? 'physical' : 'both'
+                return (
+                  <label key={option.value} className="flex items-start gap-3 text-sm text-gray-700">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={ops.passTypes[key]}
+                      onChange={(event) =>
+                        setOps({
+                          ...ops,
+                          passTypes: { ...ops.passTypes, [key]: event.target.checked },
+                        })
+                      }
+                    />
+                    <span>
+                      <span className="font-medium text-gray-900">{option.label}</span>
+                      <span className="block text-xs text-gray-500">{option.hint}</span>
+                    </span>
+                  </label>
+                )
+              })}
+            </div>
+            <div className="flex justify-end">
+              <Button type="submit" loading={saving === 'passes'}>Save pass types</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <h2 className="text-lg font-semibold text-gray-900">QR code</h2>
         </CardHeader>
         <CardContent>
           <form onSubmit={(event) => saveOps(event, 'qr')} className="space-y-4">
             <p className="text-sm text-gray-600">
-              What a phone or scanner should do when it reads this venue’s membership QR. URL mode encodes a short link on this platform that includes this venue and the card number, so two venues can both have card 1500 without mixing them up.
+              What a phone or scanner should do when it reads this venue’s membership QR. URL and script
+              modes encode a short link on this platform that includes this venue and the card number, so two
+              venues can both have card 1500 without mixing them up.
+            </p>
+            <Input
+              label="QR-only card numbers start at"
+              type="number"
+              min={1}
+              step={1}
+              value={ops.qrNumberStart}
+              onChange={(event) =>
+                setOps({
+                  ...ops,
+                  qrNumberStart: Math.max(1, parseInt(event.target.value, 10) || 1),
+                })
+              }
+              className="font-mono"
+            />
+            <p className="text-xs text-gray-500 -mt-2">
+              Digital QR memberships take the next unused number from this value, skipping anything already imported as printed stock. Keep this above your physical card range (for example 10000 if stock is 1500–1999).
             </p>
             <Select
               label="When scanned"
@@ -338,6 +426,7 @@ export default function SettingsPage() {
               options={[
                 { value: 'TILL', label: 'Till / magstripe string (compatible with bar tills)' },
                 { value: 'URL', label: 'Open a web page via this platform (venue + card link)' },
+                { value: 'SCRIPT', label: 'Custom landing page script' },
               ]}
             />
             {ops.qrCodeMode === 'URL' && (
@@ -357,9 +446,37 @@ export default function SettingsPage() {
                 If you omit them, <code>membershipNumber</code> is added as a query parameter.
               </p>
             )}
+            {ops.qrCodeMode === 'SCRIPT' && (
+              <div>
+                <label htmlFor="qr-scan-script" className="block text-sm font-medium text-gray-700 mb-1">
+                  Landing page script
+                </label>
+                <textarea
+                  id="qr-scan-script"
+                  value={ops.qrScanScript}
+                  onChange={(event) => setOps({ ...ops, qrScanScript: event.target.value })}
+                  rows={12}
+                  spellCheck={false}
+                  placeholder={`fetch('https://example.com/check-in', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name, mobile, email, cardNumber })
+})`}
+                  className="w-full px-3 py-2 text-sm font-mono border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <p className="mt-2 text-xs text-gray-500">
+                  Runs in the member’s browser when this venue’s QR is opened. Variables in scope:{' '}
+                  <code>name</code>, <code>mobile</code>, <code>email</code>, <code>cardNumber</code>, and{' '}
+                  <code>phone</code>. The full record is <code>membership</code> (including{' '}
+                  <code>planName</code>, <code>status</code>, <code>expiry</code>, <code>tenant</code>).
+                  Same QR encoding as URL mode, so switching between them does not need new cards. Anyone
+                  who opens the link can see these fields — use this at the door, not as a public page.
+                </p>
+              </div>
+            )}
             <div>
               <p className="block text-sm font-medium text-gray-700 mb-1">
-                {ops.qrCodeMode === 'URL' ? 'Encoded in the QR (example card 1500)' : 'Example card 1500'}
+                {qrUsesGateway(ops.qrCodeMode) ? 'Encoded in the QR (example card 1500)' : 'Example card 1500'}
               </p>
               <p className="px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 font-mono text-gray-900 break-all text-sm">
                 {qrPreview}
@@ -401,21 +518,57 @@ export default function SettingsPage() {
               Run now
             </Button>
           </div>
-          <div className="border-t border-gray-200 pt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="font-medium text-gray-900">Send expiry reminders</h3>
-              <p className="text-sm text-gray-500">
-                Email members at this venue whose membership expires in the next 30 days.
-              </p>
-            </div>
-            <Button
-              variant="secondary"
-              className="w-full sm:w-auto shrink-0"
-              loading={running === 'reminders'}
-              onClick={() => void runJob('/api/cron/send-renewal-reminders', 'reminders')}
-            >
-              Send reminders
-            </Button>
+          <div className="border-t border-gray-200 pt-6 space-y-4">
+            <form onSubmit={(event) => saveOps(event, 'reminders')} className="space-y-4">
+              <div>
+                <h3 className="font-medium text-gray-900">Expiry reminders</h3>
+                <p className="text-sm text-gray-500">
+                  Members whose card expires in the next 30 days. They keep the same card number; the extra
+                  year is added from the current expiry, not from the day they pay.
+                </p>
+              </div>
+              <label className="flex items-start gap-3 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={ops.renewalEmailEnabled}
+                  onChange={(event) => setOps({ ...ops, renewalEmailEnabled: event.target.checked })}
+                />
+                <span>
+                  <span className="font-medium text-gray-900">Email</span>
+                  <span className="block text-xs text-gray-500">Send the renewal reminder email with a renew link.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={ops.renewalSmsEnabled}
+                  onChange={(event) => setOps({ ...ops, renewalSmsEnabled: event.target.checked })}
+                />
+                <span>
+                  <span className="font-medium text-gray-900">Text message</span>
+                  <span className="block text-xs text-gray-500">
+                    SMS to UK mobiles. Platform SMS must also be on, and this uses venue SMS credits.
+                  </span>
+                </span>
+              </label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+                <Button type="submit" variant="secondary" loading={saving === 'reminders'}>
+                  Save reminder settings
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="w-full sm:w-auto shrink-0"
+                  loading={running === 'reminders'}
+                  disabled={!ops.renewalEmailEnabled && !ops.renewalSmsEnabled}
+                  onClick={() => void runJob('/api/cron/send-renewal-reminders', 'reminders')}
+                >
+                  Send reminders
+                </Button>
+              </div>
+            </form>
           </div>
         </CardContent>
       </Card>

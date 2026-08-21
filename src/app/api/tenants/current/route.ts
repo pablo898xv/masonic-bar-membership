@@ -4,7 +4,9 @@ import { tenantsCollection, Tenant } from '@/lib/db'
 import { isSuperAdmin, requireAdmin } from '@/lib/auth'
 import { publicPaymentOptions } from '@/lib/payment-options'
 import { maskAccountNumber, maskSortCode } from '@/lib/bank-account'
-import { qrCodeModeOf, qrRedirectUrlError } from '@/lib/qr-payload'
+import { qrCodeModeOf, qrRedirectUrlError, qrScanScriptError } from '@/lib/qr-payload'
+import { qrNumberStartOf } from '@/lib/card-number-alloc'
+import { parsePassTypesBody, passTypesOf } from '@/lib/card-type'
 import {
   formatMagstripeTrackList,
   magstripePrefixIsNumeric,
@@ -26,8 +28,11 @@ function venuePaymentFields(tenant: Tenant) {
     bankAccountNumberSet: Boolean(tenant.bankAccountNumber),
     magstripePrefix: tenant.magstripePrefix || ';9998',
     magstripeTracks: normalizeMagstripeTracks(tenant.magstripeTracks),
-    qrCodeMode: tenant.qrCodeMode === 'URL' ? 'URL' : 'TILL',
+    qrCodeMode: qrCodeModeOf(tenant.qrCodeMode),
     qrRedirectUrl: tenant.qrRedirectUrl || '',
+    qrScanScript: tenant.qrScanScript || '',
+    qrNumberStart: qrNumberStartOf(tenant),
+    passTypes: passTypesOf(tenant.passTypes),
     tillSystemApiUrl: tenant.tillSystemApiUrl || '',
     tillSystemApiKeySet: Boolean(tenant.tillSystemApiKey),
     cardPayments: {
@@ -35,6 +40,8 @@ function venuePaymentFields(tenant: Tenant) {
       processors: serializeCardPayments(tenant.cardPayments),
     },
     openBankingEnabled: tenant.openBankingEnabled !== false,
+    renewalEmailEnabled: tenant.renewalEmailEnabled !== false,
+    renewalSmsEnabled: tenant.renewalSmsEnabled !== false,
   }
 }
 
@@ -139,8 +146,29 @@ export async function PUT(request: NextRequest) {
         )
       }
     }
-    if (body.qrCodeMode === 'TILL' || body.qrCodeMode === 'URL') patch.qrCodeMode = body.qrCodeMode
+    if (body.qrCodeMode === 'TILL' || body.qrCodeMode === 'URL' || body.qrCodeMode === 'SCRIPT') {
+      patch.qrCodeMode = body.qrCodeMode
+    }
     if (typeof body.qrRedirectUrl === 'string') patch.qrRedirectUrl = body.qrRedirectUrl.trim()
+    if (typeof body.qrScanScript === 'string') {
+      const scriptError = qrScanScriptError(body.qrScanScript)
+      if (scriptError) return NextResponse.json({ error: scriptError }, { status: 400 })
+      patch.qrScanScript = body.qrScanScript
+    }
+    if (body.qrNumberStart !== undefined && body.qrNumberStart !== null && body.qrNumberStart !== '') {
+      const start = Number(body.qrNumberStart)
+      if (!Number.isInteger(start) || start < 1) {
+        return NextResponse.json({ error: 'QR card numbers must start at a whole number of 1 or more.' }, { status: 400 })
+      }
+      patch.qrNumberStart = start
+    }
+    if (body.passTypes !== undefined) {
+      const parsed = parsePassTypesBody(body.passTypes)
+      if ('error' in parsed) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 })
+      }
+      patch.passTypes = parsed
+    }
     if (qrCodeModeOf(patch.qrCodeMode || tenant.qrCodeMode) === 'URL') {
       const urlError = qrRedirectUrlError(patch.qrRedirectUrl ?? tenant.qrRedirectUrl ?? '')
       if (urlError) return NextResponse.json({ error: urlError }, { status: 400 })
@@ -151,6 +179,8 @@ export async function PUT(request: NextRequest) {
       patch.cardPayments = mergeCardPayments(tenant.cardPayments, body.cardPayments)
     }
     if (typeof body.openBankingEnabled === 'boolean') patch.openBankingEnabled = body.openBankingEnabled
+    if (typeof body.renewalEmailEnabled === 'boolean') patch.renewalEmailEnabled = body.renewalEmailEnabled
+    if (typeof body.renewalSmsEnabled === 'boolean') patch.renewalSmsEnabled = body.renewalSmsEnabled
 
     const updated = await tenantsCollection.update(tenant.id, patch)
     return NextResponse.json({

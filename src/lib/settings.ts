@@ -1,5 +1,5 @@
 import { systemConfigCollection, tenantsCollection } from './db'
-import { formatMagstripeTrackList, normalizeMagstripeTracks } from './msrx6/protocol'
+import { formatMagstripeTrackList, normalizeMagstripeTracks, withMagstripeSentinels } from './msrx6/protocol'
 import { maskAccountNumber, maskSortCode } from './bank-account'
 
 export const APP_SETTINGS_KEY = 'appSettings'
@@ -54,6 +54,14 @@ export type AppSettings = {
   smsWelcomeTemplate: string
   smsRenewalTemplate: string
   smsDigitalCardTemplate: string
+  emailWelcomeSubject: string
+  emailWelcomeTemplate: string
+  emailRenewalSubject: string
+  emailRenewalTemplate: string
+  emailRenewalConfirmSubject: string
+  emailRenewalConfirmTemplate: string
+  emailDigitalCardSubject: string
+  emailDigitalCardTemplate: string
 }
 
 export const APP_SETTINGS_DEFAULTS: AppSettings = {
@@ -96,6 +104,52 @@ export const APP_SETTINGS_DEFAULTS: AppSettings = {
     'Hi {{member_name}}, your membership (card {{card_number}}) expires in {{days}} days ({{expiry}}). Renew: {{renewal_url}}',
   smsDigitalCardTemplate:
     '{{tenant_name}} has issued you a digital membership card, click here to download to your smartphone. {{card_url}}',
+  emailWelcomeSubject: 'Welcome to Membership Manager - Your membership is active!',
+  emailWelcomeTemplate: `Dear {{member_name}},
+
+Thank you for becoming a member! {{card_type_text}}
+
+Card Number: {{card_number}}
+Membership Plan: {{plan}}
+Valid Until: {{expiry}}
+Card Type: {{card_type}}
+
+{{card_url}}
+
+Simply present your membership card at the bar to receive your member discounts.
+
+We look forward to seeing you at the bar!`,
+  emailRenewalSubject: 'Your Membership Manager membership expires in {{days}} days',
+  emailRenewalTemplate: `Dear {{member_name}},
+
+Your membership will expire soon.
+
+Card Number: {{card_number}}
+Current Plan: {{plan}}
+Expiry Date: {{expiry}}
+Days remaining: {{days}}
+
+You keep the same card number, and the extra year is added from your current expiry date — not from the day you pay.
+
+Renew here: {{renewal_url}}
+
+If you have any questions, please speak to the bar manager.`,
+  emailRenewalConfirmSubject: 'Your membership is renewed until {{expiry}}',
+  emailRenewalConfirmTemplate: `Dear {{member_name}},
+
+Your membership has been renewed. You keep the same card number.
+
+Card Number: {{card_number}}
+Plan: {{plan}}
+Valid until: {{expiry}}
+
+If you have any questions, please speak to the bar manager.`,
+  emailDigitalCardSubject: 'Your Membership Manager digital card',
+  emailDigitalCardTemplate: `Hi {{member_name}},
+
+{{tenant_name}} has issued you a digital membership card. Click here to download it to your smartphone:
+
+{{card_url}}`,
 }
 
 const SETTING_KEYS = Object.keys(APP_SETTINGS_DEFAULTS) as (keyof AppSettings)[]
@@ -206,7 +260,7 @@ export async function getMagstripeTracks(tenantId?: string) {
 }
 
 export async function formatMagstripeData(cardNumber: number, tenantId?: string): Promise<string> {
-  return `${await getMagstripePrefix(tenantId)}${cardNumber}`
+  return withMagstripeSentinels(`${await getMagstripePrefix(tenantId)}${cardNumber}`)
 }
 
 export function magstripeEncodingCopy(prefix: string, tracks?: unknown) {
@@ -215,9 +269,9 @@ export function magstripeEncodingCopy(prefix: string, tracks?: unknown) {
   return {
     prefix,
     tracks: selected,
-    format: `${prefix}{CARD_NUMBER} written to ${label}`,
-    example: `${prefix}1500`,
-    note: `Encode ${label} exactly as shown. The number printed on the back of the physical card must match.`,
+    format: `${prefix}{CARD_NUMBER}? written to ${label}`,
+    example: withMagstripeSentinels(`${prefix}1500`),
+    note: `Encode ${label} exactly as shown, including the ? at the end. That character is written onto the card and comes back when the card is swiped. The number printed on the back of the physical card must match.`,
   }
 }
 
@@ -305,6 +359,14 @@ export function toPublicSettings(settings: AppSettings, platformAdmin = false) {
     smsWelcomeTemplate: settings.smsWelcomeTemplate,
     smsRenewalTemplate: settings.smsRenewalTemplate,
     smsDigitalCardTemplate: settings.smsDigitalCardTemplate,
+    emailWelcomeSubject: settings.emailWelcomeSubject,
+    emailWelcomeTemplate: settings.emailWelcomeTemplate,
+    emailRenewalSubject: settings.emailRenewalSubject,
+    emailRenewalTemplate: settings.emailRenewalTemplate,
+    emailRenewalConfirmSubject: settings.emailRenewalConfirmSubject,
+    emailRenewalConfirmTemplate: settings.emailRenewalConfirmTemplate,
+    emailDigitalCardSubject: settings.emailDigitalCardSubject,
+    emailDigitalCardTemplate: settings.emailDigitalCardTemplate,
   }
 }
 

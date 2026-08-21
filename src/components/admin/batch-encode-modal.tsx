@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
 import { isMsrx6Cancelled } from '@/lib/msrx6/device'
+import { withMagstripeSentinels } from '@/lib/msrx6/protocol'
 import type { Msrx6Writer } from '@/lib/msrx6/use-msrx6'
 
 export type BatchEncodeCard = {
@@ -251,7 +252,7 @@ export function BatchEncodeModal({
               {cardNumber(current)}
             </p>
             <p className="mt-3 text-lg font-medium text-gray-900">{current.membership.member.name}</p>
-            <p className="text-sm font-mono text-yellow-900 mt-2 break-all">{current.magstripeData}</p>
+            <p className="text-sm font-mono text-yellow-900 mt-2 break-all">{withMagstripeSentinels(current.magstripeData)}</p>
           </div>
 
           {swipeHint && (

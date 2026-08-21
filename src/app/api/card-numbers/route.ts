@@ -33,8 +33,17 @@ export async function GET(request: NextRequest) {
     const cardNumbers = await Promise.all(
       numbers.map(async (number) => {
         const magstripeData = await formatMagstripeData(number.cardNumber, tenant.id)
+        const pool = number.pool === 'QR' ? 'QR' : 'PHYSICAL'
+        const physical = pool === 'PHYSICAL'
         if (!number.isAssigned) {
-          return { ...number, magstripeData, canEncode: true, membership: null, cardIssuance: null }
+          return {
+            ...number,
+            pool,
+            magstripeData: physical ? magstripeData : '',
+            canEncode: physical,
+            membership: null,
+            cardIssuance: null,
+          }
         }
 
         const linked = await membershipsCollection.findByMembershipNumberId(number.id)
@@ -45,7 +54,14 @@ export async function GET(request: NextRequest) {
           null
 
         if (!membership) {
-          return { ...number, magstripeData, canEncode: true, membership: null, cardIssuance: null }
+          return {
+            ...number,
+            pool,
+            magstripeData: physical ? magstripeData : '',
+            canEncode: physical,
+            membership: null,
+            cardIssuance: null,
+          }
         }
 
         const [member, cardIssuance] = await Promise.all([
@@ -54,10 +70,11 @@ export async function GET(request: NextRequest) {
         ])
 
         const paid = isPaidMembershipStatus(membership.status)
-        const canEncode = paid && (cardIssuance?.queueStatus !== 'PENDING')
+        const canEncode = physical && paid && (cardIssuance?.queueStatus !== 'PENDING')
 
         return {
           ...number,
+          pool,
           magstripeData: canEncode ? magstripeData : '',
           canEncode,
           membership: member
@@ -125,14 +142,15 @@ export async function POST(request: NextRequest) {
       existingNumbers.filter((number) => number.tenantId === tenant.id).map((n) => n.cardNumber)
     )
     
-    const newNumbers: Array<{ cardNumber: number; batchId?: string }> = []
+    const newNumbers: Array<{ cardNumber: number; batchId?: string; pool?: 'PHYSICAL' | 'QR' }> = []
     const importBatchId = batchId || `batch-${Date.now()}`
     
     for (let num = startNumber; num <= endNumber; num++) {
       if (!existingSet.has(num)) {
         newNumbers.push({
           cardNumber: num,
-          batchId: importBatchId
+          batchId: importBatchId,
+          pool: 'PHYSICAL',
         })
       }
     }

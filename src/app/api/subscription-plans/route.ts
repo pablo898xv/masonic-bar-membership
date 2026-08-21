@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { subscriptionPlansCollection } from '@/lib/db'
 import { subscriptionPlanSchema } from '@/lib/validation'
 import { requireTenant } from '@/lib/tenancy'
-import { getAuthenticatedUser, requireAdmin } from '@/lib/auth'
-import { isZeroPrice } from '@/lib/money'
+import { requireAdmin } from '@/lib/auth'
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,10 +13,8 @@ export async function GET(request: NextRequest) {
     const activeOnly = searchParams.get('active') === 'true'
     
     const plans = await subscriptionPlansCollection.findMany(activeOnly, tenant.id)
-    const user = await getAuthenticatedUser(request)
-    const visible = user ? plans : plans.filter((plan) => !isZeroPrice(plan.price))
 
-    return NextResponse.json(visible)
+    return NextResponse.json(plans)
   } catch (error) {
     console.error('Error fetching subscription plans:', error)
     return NextResponse.json({ error: 'Failed to fetch subscription plans' }, { status: 500 })

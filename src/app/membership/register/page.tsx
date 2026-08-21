@@ -13,6 +13,14 @@ import {
   type PaymentOptionsView,
 } from '@/components/payment-method-picker'
 import { memberSchema } from '@/lib/validation'
+import { formatPlanPrice, isZeroPrice } from '@/lib/money'
+import { PassTypePicker } from '@/components/pass-type-picker'
+import {
+  cardTypeLabel,
+  offeredCardTypes,
+  passTypesOf,
+  type VenuePassTypes,
+} from '@/lib/card-type'
 
 interface SubscriptionPlan {
   id: string
@@ -64,6 +72,7 @@ export default function RegisterPage() {
     defaultMethod: 'OPEN_BANKING',
     cardLabel: 'Card',
   })
+  const [passTypes, setPassTypes] = useState<VenuePassTypes>(passTypesOf())
 
   const [formData, setFormData] = useState({
     name: '',
@@ -85,6 +94,10 @@ export default function RegisterPage() {
         const branding = brandingRes.ok ? await brandingRes.json() : null
         setSignupOpen(Boolean(branding?.signup?.open))
         setPlans(Array.isArray(data) ? data : [])
+        const nextPassTypes = passTypesOf(branding?.passTypes)
+        setPassTypes(nextPassTypes)
+        const offered = offeredCardTypes(nextPassTypes)
+        const autoType = offered.length === 1 ? offered[0] : ''
         if (branding?.payments) {
           setPayments(branding.payments)
           setFormData((prev) => ({
@@ -92,9 +105,15 @@ export default function RegisterPage() {
             paymentMethod: prev.paymentMethod || defaultPaymentMethod(branding.payments),
             subscriptionPlanId:
               prev.subscriptionPlanId || (Array.isArray(data) && data.length === 1 ? data[0].id : ''),
+            cardType: prev.cardType || autoType,
           }))
-        } else if (Array.isArray(data) && data.length === 1) {
-          setFormData((prev) => ({ ...prev, subscriptionPlanId: prev.subscriptionPlanId || data[0].id }))
+        } else {
+          setFormData((prev) => ({
+            ...prev,
+            subscriptionPlanId:
+              prev.subscriptionPlanId || (Array.isArray(data) && data.length === 1 ? data[0].id : ''),
+            cardType: prev.cardType || autoType,
+          }))
         }
       } catch (error) {
         console.error('Error fetching plans:', error)
@@ -112,8 +131,9 @@ export default function RegisterPage() {
   })
   const detailsReady = details.success
   const optionsReady = Boolean(formData.subscriptionPlanId && formData.cardType)
-  const paymentReady = Boolean(formData.paymentMethod) && (payments.openBanking || payments.card.length > 0)
   const selectedPlan = plans.find((p) => p.id === formData.subscriptionPlanId)
+  const freePlan = isZeroPrice(selectedPlan?.price)
+  const paymentReady = Boolean(formData.paymentMethod) && (payments.openBanking || payments.card.length > 0)
 
   const goToOptions = async () => {
     const parsed = memberSchema.safeParse({
@@ -159,7 +179,7 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!detailsReady || !optionsReady || !paymentReady) {
+    if (!detailsReady || !optionsReady || (!freePlan && !paymentReady)) {
       setError('Please complete all required fields')
       return
     }
@@ -196,7 +216,7 @@ export default function RegisterPage() {
           memberId: member.id,
           subscriptionPlanId: formData.subscriptionPlanId,
           cardType: formData.cardType,
-          paymentMethod: formData.paymentMethod,
+          paymentMethod: freePlan ? undefined : formData.paymentMethod,
         }),
       })
 
@@ -390,52 +410,16 @@ export default function RegisterPage() {
                               </p>
                             </div>
                           </div>
-                          <p className="text-lg font-bold text-gray-900">£{plan.price.toFixed(2)}</p>
+                          <p className="text-lg font-bold text-gray-900">{formatPlanPrice(plan.price)}</p>
                         </label>
                       ))}
                     </div>
 
-                    <div className="space-y-3">
-                      <label className="block text-sm font-medium text-gray-700">Card Type</label>
-                      <div className="grid grid-cols-2 gap-3">
-                        <label
-                          className={`p-4 text-center ${selectableTileClass(formData.cardType === 'QR_CODE')}`}
-                        >
-                          <input
-                            type="radio"
-                            name="cardType"
-                            value="QR_CODE"
-                            required
-                            checked={formData.cardType === 'QR_CODE'}
-                            onChange={(e) => setFormData({ ...formData, cardType: e.target.value })}
-                            className="sr-only"
-                          />
-                          <svg className="mx-auto w-8 h-8 text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                          </svg>
-                          <p className="font-medium text-gray-900">Digital QR Code</p>
-                          <p className="text-xs text-gray-500 mt-1">Instant issue</p>
-                        </label>
-                        <label
-                          className={`p-4 text-center ${selectableTileClass(formData.cardType === 'PHYSICAL_CARD')}`}
-                        >
-                          <input
-                            type="radio"
-                            name="cardType"
-                            value="PHYSICAL_CARD"
-                            required
-                            checked={formData.cardType === 'PHYSICAL_CARD'}
-                            onChange={(e) => setFormData({ ...formData, cardType: e.target.value })}
-                            className="sr-only"
-                          />
-                          <svg className="mx-auto w-8 h-8 text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
-                          </svg>
-                          <p className="font-medium text-gray-900">Physical Card</p>
-                          <p className="text-xs text-gray-500 mt-1">Collect at bar</p>
-                        </label>
-                      </div>
-                    </div>
+                    <PassTypePicker
+                      value={formData.cardType}
+                      passTypes={passTypes}
+                      onChange={(cardType) => setFormData({ ...formData, cardType })}
+                    />
                   </>
                 )}
               </CardContent>
@@ -453,7 +437,7 @@ export default function RegisterPage() {
           {step === 3 && (
             <Card>
               <CardHeader>
-                <h2 className="text-lg font-semibold text-gray-900">Payment</h2>
+                <h2 className="text-lg font-semibold text-gray-900">{freePlan ? 'Confirm' : 'Payment'}</h2>
               </CardHeader>
               <CardContent className="space-y-6">
                 {error && <RegisterNotice error={error} alreadyMember={alreadyMember} />}
@@ -472,30 +456,37 @@ export default function RegisterPage() {
                     <div className="flex justify-between">
                       <span className="text-gray-600">Card Type</span>
                       <span className="font-medium">
-                        {formData.cardType === 'QR_CODE' ? 'Digital QR Code' : 'Physical Card'}
+                        {formData.cardType ? cardTypeLabel(formData.cardType) : '—'}
                       </span>
                     </div>
                     <div className="border-t border-gray-200 pt-2 mt-2">
                       <div className="flex justify-between text-lg">
                         <span className="font-medium">Total</span>
-                        <span className="font-bold">£{selectedPlan?.price.toFixed(2)}</span>
+                        <span className="font-bold">{formatPlanPrice(selectedPlan?.price)}</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <PaymentMethodPicker
-                  value={formData.paymentMethod}
-                  onChange={(method) => setFormData({ ...formData, paymentMethod: method })}
-                  options={payments}
-                />
+                {!freePlan && (
+                  <PaymentMethodPicker
+                    value={formData.paymentMethod}
+                    onChange={(method) => setFormData({ ...formData, paymentMethod: method })}
+                    options={payments}
+                  />
+                )}
+                {freePlan && (
+                  <p className="text-sm text-gray-600">
+                    This membership is free. Continue to issue your card — no payment is taken.
+                  </p>
+                )}
               </CardContent>
               <CardFooter className="flex justify-between">
                 <Button type="button" variant="secondary" onClick={() => setStep(2)}>
                   Back
                 </Button>
-                <Button type="submit" loading={submitting} disabled={!paymentReady}>
-                  Pay £{selectedPlan?.price.toFixed(2)}
+                <Button type="submit" loading={submitting} disabled={!freePlan && !paymentReady}>
+                  {freePlan ? 'Complete registration' : `Pay ${formatPlanPrice(selectedPlan?.price)}`}
                 </Button>
               </CardFooter>
             </Card>

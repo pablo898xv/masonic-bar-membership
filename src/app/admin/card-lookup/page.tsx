@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
-import { primaryTrack, stripSentinels, tracksMatch, tracksFromMagstripe, formatMagstripeTrackList, type IsoTracks, type MagstripeTrack } from '@/lib/msrx6/protocol'
+import { primaryTrack, stripSentinels, tracksMatch, tracksFromMagstripe, formatMagstripeTrackList, withMagstripeSentinels, type IsoTracks, type MagstripeTrack } from '@/lib/msrx6/protocol'
 
 interface LookupMembership {
   id: string
@@ -98,10 +98,10 @@ export default function CardLookupPage() {
       const raw = primaryTrack(tracks)
       if (!raw) throw new Error('The swipe returned empty tracks. Try again at a steady speed.')
       const display = tracks.track2
-        ? `;${stripSentinels(tracks.track2)}`
+        ? withMagstripeSentinels(`;${stripSentinels(tracks.track2)}`)
         : tracks.track1
-          ? `%${stripSentinels(tracks.track1)}`
-          : `+${stripSentinels(tracks.track3)}`
+          ? withMagstripeSentinels(`%${stripSentinels(tracks.track1)}`)
+          : withMagstripeSentinels(`+${stripSentinels(tracks.track3)}`)
       setSwipedTracks(tracks)
       setSwipedTrack(display)
       setQuery(display)
@@ -188,7 +188,7 @@ export default function CardLookupPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Expected {trackLabel}</p>
-                <p className="font-mono font-bold text-gray-900 mt-1 break-all">{result.magstripeData}</p>
+                <p className="font-mono font-bold text-gray-900 mt-1 break-all">{withMagstripeSentinels(result.magstripeData)}</p>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500">Swiped</p>

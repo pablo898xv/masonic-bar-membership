@@ -112,6 +112,7 @@ export async function ensureDefaultTenant() {
     creditBalance: 100,
     paymentMode: 'PLATFORM',
     magstripePrefix: ';9998',
+    qrNumberStart: 10000,
   })
   await tagOrphans(tenant.id)
   return tenant
@@ -207,9 +208,7 @@ export async function requireTenant(request: NextRequest) {
   return { tenant, error: null as NextResponse | null }
 }
 
-export function creditsNeeded(cardType: string) {
-  return cardType === 'BOTH' ? 2 : 1
-}
+export { creditsNeeded } from './card-type'
 
 export const NO_CREDITS_MESSAGE =
   'No issuance credits remaining. Buy a credit pack before issuing a QR code or physical card.'

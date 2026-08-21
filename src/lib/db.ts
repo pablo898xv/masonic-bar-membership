@@ -26,6 +26,7 @@ export interface MembershipNumber {
   tenantId: string
   cardNumber: number
   batchId?: string
+  pool?: 'PHYSICAL' | 'QR'
   isAssigned: boolean
   assignedAt?: Date
   createdAt: Date
@@ -149,12 +150,21 @@ export interface Tenant {
   bankAccountNumber?: string
   magstripePrefix?: string
   magstripeTracks?: number[]
-  qrCodeMode?: 'TILL' | 'URL'
+  qrCodeMode?: 'TILL' | 'URL' | 'SCRIPT'
   qrRedirectUrl?: string
+  qrScanScript?: string
+  qrNumberStart?: number
+  passTypes?: {
+    qr?: boolean
+    physical?: boolean
+    both?: boolean
+  }
   tillSystemApiUrl?: string
   tillSystemApiKey?: string
   cardPayments?: TenantCardPayments
   openBankingEnabled?: boolean
+  renewalEmailEnabled?: boolean
+  renewalSmsEnabled?: boolean
   addressLine1?: string
   addressLine2?: string
   city?: string
@@ -448,7 +458,10 @@ export const membersCollection = {
 }
 
 export const membershipNumbersCollection = {
-  async createMany(numbers: Array<{ cardNumber: number; batchId?: string }>, tenantId: string): Promise<number> {
+  async createMany(
+    numbers: Array<{ cardNumber: number; batchId?: string; pool?: 'PHYSICAL' | 'QR' }>,
+    tenantId: string
+  ): Promise<number> {
     const db = getDb()
     const now = new Date()
     const chunkSize = 400
@@ -462,6 +475,7 @@ export const membershipNumbersCollection = {
           tenantId,
           cardNumber: num.cardNumber,
           batchId: num.batchId,
+          pool: num.pool || 'PHYSICAL',
           isAssigned: false,
           createdAt: now,
         }
@@ -493,6 +507,7 @@ export const membershipNumbersCollection = {
     const matches = snapshot.docs
       .map((doc) => fromFirestoreData<MembershipNumber>(doc.id, doc.data()))
       .filter((number) => !tenantId || number.tenantId === tenantId)
+      .filter((number) => number.pool !== 'QR')
     return matches[0] || null
   },
 
@@ -509,7 +524,11 @@ export const membershipNumbersCollection = {
     batchId?: string
     skip?: number
     take?: number
-  } = {}): Promise<{ numbers: MembershipNumber[]; total: number; stats: { total: number; assigned: number; available: number } }> {
+  } = {}): Promise<{
+    numbers: MembershipNumber[]
+    total: number
+    stats: { total: number; assigned: number; available: number; qrTotal: number }
+  }> {
     const db = getDb()
     let query: FirebaseFirestore.Query = db.collection(COLLECTIONS.membershipNumbers)
       .orderBy('cardNumber', 'asc')
@@ -526,15 +545,19 @@ export const membershipNumbersCollection = {
       options.tenantId
     )
 
+    const physical = all.filter((number) => number.pool !== 'QR')
     const stats = {
-      total: all.length,
-      assigned: all.filter((number) => number.isAssigned).length,
-      available: all.filter((number) => !number.isAssigned).length,
+      total: physical.length,
+      assigned: physical.filter((number) => number.isAssigned).length,
+      available: physical.filter((number) => !number.isAssigned).length,
+      qrTotal: all.filter((number) => number.pool === 'QR').length,
     }
 
     let numbers = all
-    if (options.assigned !== undefined) {
-      numbers = numbers.filter((number) => number.isAssigned === options.assigned)
+    if (options.assigned === false) {
+      numbers = numbers.filter((number) => !number.isAssigned && number.pool !== 'QR')
+    } else if (options.assigned === true) {
+      numbers = numbers.filter((number) => number.isAssigned)
     }
 
     const total = numbers.length
@@ -579,6 +602,7 @@ export const membershipNumbersCollection = {
         tenantId: existing.tenantId,
         cardNumber: existing.cardNumber,
         ...(existing.batchId ? { batchId: existing.batchId } : {}),
+        ...(existing.pool ? { pool: existing.pool } : {}),
         isAssigned: false,
         createdAt: existing.createdAt,
       })
@@ -1173,6 +1197,13 @@ export const tenantUsersCollection = {
     if (snapshot.empty) return null
     const doc = snapshot.docs[0]
     return fromFirestoreData<TenantUser>(doc.id, doc.data())
+  },
+
+  async update(id: string, data: Partial<TenantUser>): Promise<TenantUser> {
+    const db = getDb()
+    await db.collection(COLLECTIONS.tenantUsers).doc(id).update(toFirestoreData(data as Record<string, unknown>))
+    const docRef = await db.collection(COLLECTIONS.tenantUsers).doc(id).get()
+    return fromFirestoreData<TenantUser>(id, docRef.data()!)
   },
 
   async delete(id: string): Promise<void> {

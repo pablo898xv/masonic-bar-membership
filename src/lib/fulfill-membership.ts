@@ -6,6 +6,7 @@ import {
   membersCollection,
   walletPassesCollection,
   tenantsCollection,
+  paymentTransactionsCollection,
 } from '@/lib/db'
 import { tillSystemFor } from '@/lib/till-system'
 import { formatMembershipQRData } from '@/lib/qrcode'
@@ -13,10 +14,11 @@ import { ensureMembershipCardLink } from '@/lib/card-link'
 import { emailService } from '@/lib/email'
 import { sendMembershipSms } from '@/lib/sms'
 import { UK_MOBILE_SMS_MESSAGE } from '@/lib/phone'
-import { hasDigitalCard } from '@/lib/card-type'
+import { hasDigitalCard, hasPhysicalCard } from '@/lib/card-type'
 import { isPaidMembershipStatus } from '@/lib/payment-methods'
 import { formatMagstripeData, getAppSettings } from '@/lib/settings'
 import { assertCreditsAvailable, consumeIssuanceCredit, unchargedFormats } from '@/lib/tenancy'
+import { isRenewalPayment, renewedExpiryDate } from '@/lib/renewal'
 import { v4 as uuidv4 } from 'uuid'
 
 function smsSkipMessage(skipped?: string, fallback?: string) {
@@ -91,6 +93,63 @@ export async function sendDigitalCardSms(membershipId: string) {
   }
 }
 
+export async function sendDigitalCardEmail(membershipId: string) {
+  const membership = await membershipsCollection.findById(membershipId)
+  if (!membership) {
+    return { ok: false as const, status: 404, error: 'Membership not found' }
+  }
+  if (!hasDigitalCard(membership.cardType)) {
+    return { ok: false as const, status: 400, error: 'Email is only sent for digital QR cards' }
+  }
+  if (membership.status === 'PENDING_PAYMENT' || membership.status === 'CANCELLED') {
+    return { ok: false as const, status: 400, error: 'This membership is not ready for a digital card email' }
+  }
+
+  const [member, membershipNumber] = await Promise.all([
+    membersCollection.findById(membership.memberId),
+    membershipNumbersCollection.findById(membership.membershipNumberId),
+  ])
+  if (!member) return { ok: false as const, status: 404, error: 'Member not found' }
+  if (!member.email?.trim()) {
+    return { ok: false as const, status: 400, error: 'This member has no email address' }
+  }
+  if (!membershipNumber) return { ok: false as const, status: 404, error: 'Card number not found' }
+
+  if (!(await emailService.isConfigured())) {
+    return { ok: false as const, status: 400, error: 'Email is not configured' }
+  }
+
+  const [tenant, link] = await Promise.all([
+    tenantsCollection.findById(membership.tenantId),
+    ensureMembershipCardLink(membership),
+  ])
+
+  try {
+    const result = await emailService.sendDigitalCardEmail({
+      memberName: member.name,
+      memberEmail: member.email,
+      cardNumber: membershipNumber.cardNumber,
+      qrCodeUrl: link.shortUrl,
+      tenantName: tenant?.name,
+      logoPng: tenant?.logoPng,
+    })
+    if (!result.success) {
+      return { ok: false as const, status: 502, error: result.error || 'Failed to send email' }
+    }
+    return {
+      ok: true as const,
+      to: member.email,
+      shortUrl: link.shortUrl,
+    }
+  } catch (error) {
+    return {
+      ok: false as const,
+      status: 502,
+      error: error instanceof Error ? error.message : 'Failed to send email',
+    }
+  }
+}
+
 async function notifyDigitalCardSms(membershipId: string) {
   const result = await sendDigitalCardSms(membershipId)
   if (!result.ok) {
@@ -118,7 +177,7 @@ async function ensureWalletPass(membershipId: string, cardNumber: number) {
   })
 }
 
-export async function ensureReadyToEncode(membershipId: string) {
+export async function ensureReadyToEncode(membershipId: string, asCardType?: string) {
   const membership = await membershipsCollection.findById(membershipId)
   if (!membership) return null
   if (!isPaidMembershipStatus(membership.status)) return null
@@ -126,8 +185,15 @@ export async function ensureReadyToEncode(membershipId: string) {
   const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
   if (!membershipNumber) return null
 
-  const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, membership.tenantId)
   const existing = await cardIssuancesCollection.findByMembershipId(membershipId)
+  if (!hasPhysicalCard(asCardType || membership.cardType)) {
+    if (existing && (existing.queueStatus === 'PENDING' || existing.queueStatus === 'READY_TO_ENCODE')) {
+      await cardIssuancesCollection.delete(existing.id)
+    }
+    return null
+  }
+
+  const magstripeData = await formatMagstripeData(membershipNumber.cardNumber, membership.tenantId)
 
   if (!existing) {
     return cardIssuancesCollection.create({
@@ -245,18 +311,27 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
   }
   const cardType = withAddedFormat(membership.cardType, format)
 
+  if (cardType !== membership.cardType) {
+    await membershipsCollection.update(membershipId, { cardType })
+  }
+
   if (format === 'PHYSICAL_CARD') {
-    await ensureReadyToEncode(membershipId)
+    await ensureReadyToEncode(membershipId, cardType)
   } else {
     await ensureWalletPass(membershipId, membershipNumber.cardNumber)
     if (!hasDigitalCard(membership.cardType)) {
-      const member = await membersCollection.findById(membership.memberId)
+      const [member, tenant] = await Promise.all([
+        membersCollection.findById(membership.memberId),
+        tenantsCollection.findById(membership.tenantId),
+      ])
       if (member) {
         await emailService.sendDigitalCardEmail({
           memberName: member.name,
           memberEmail: member.email,
           cardNumber: membershipNumber.cardNumber,
           qrCodeUrl: link.cardUrl,
+          tenantName: tenant?.name,
+          logoPng: tenant?.logoPng,
         })
         await notifyDigitalCardSms(membershipId)
       }
@@ -277,10 +352,6 @@ export async function enableCardFormat(membershipId: string, format: 'QR_CODE' |
     }
   }
 
-  if (cardType !== membership.cardType) {
-    await membershipsCollection.update(membershipId, { cardType })
-  }
-
   return {
     ok: true as const,
     cardType,
@@ -298,90 +369,140 @@ export async function fulfillPaidMembership(
     throw new Error('Membership not found')
   }
 
-  const subscriptionPlan = await subscriptionPlansCollection.findById(membership.subscriptionPlanId)
+  const transactions = await paymentTransactionsCollection.findByMembershipId(membershipId)
+  const renewalTx =
+    transactions
+      .filter((item) => item.status === 'COMPLETED' && isRenewalPayment(item) && !item.metadata?.renewalApplied)
+      .sort(
+        (a, b) =>
+          new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime()
+      )[0] || null
+
+  const planId =
+    typeof renewalTx?.metadata?.subscriptionPlanId === 'string'
+      ? renewalTx.metadata.subscriptionPlanId
+      : membership.subscriptionPlanId
+  const subscriptionPlan = await subscriptionPlansCollection.findById(planId)
   if (!subscriptionPlan) {
     throw new Error('Subscription plan not found')
   }
 
   const link = await ensureMembershipCardLink(membership)
   const accessToken = link.accessToken
-  const alreadyActive = membership.status === 'ACTIVE'
   const now = new Date()
-  const expiryDate = membership.expiryDate || new Date(now.getTime())
-  if (!membership.expiryDate) {
-    expiryDate.setFullYear(now.getFullYear() + subscriptionPlan.durationYears)
+  const firstIssue =
+    !renewalTx &&
+    membership.status !== 'ACTIVE' &&
+    membership.status !== 'EXPIRED' &&
+    membership.status !== 'CANCELLED'
+
+  let expiryDate = membership.expiryDate || now
+  if (renewalTx) {
+    const fromExpiry =
+      typeof renewalTx.metadata?.fromExpiry === 'string'
+        ? new Date(renewalTx.metadata.fromExpiry)
+        : membership.expiryDate
+    expiryDate = renewedExpiryDate(fromExpiry, subscriptionPlan.durationYears, now)
+  } else if (firstIssue && !membership.expiryDate) {
+    expiryDate = renewedExpiryDate(now, subscriptionPlan.durationYears, now)
   }
 
-  if (!alreadyActive) {
-    const formats = await unchargedFormats(
-      membership.tenantId,
-      membershipId,
-      membership.cardType,
-      membership.membershipNumberId
-    )
-    const available = await assertCreditsAvailable(membership.tenantId, formats.length)
-    if (!available.ok) throw new Error(available.error)
-    for (const format of formats) {
-      const charged = await consumeIssuanceCredit(
+  if (renewalTx || firstIssue) {
+    if (firstIssue) {
+      const formats = await unchargedFormats(
         membership.tenantId,
         membershipId,
-        format,
-        undefined,
+        membership.cardType,
         membership.membershipNumberId
       )
-      if (!charged.ok) throw new Error(charged.error)
+      const available = await assertCreditsAvailable(membership.tenantId, formats.length)
+      if (!available.ok) throw new Error(available.error)
+      for (const format of formats) {
+        const charged = await consumeIssuanceCredit(
+          membership.tenantId,
+          membershipId,
+          format,
+          undefined,
+          membership.membershipNumberId
+        )
+        if (!charged.ok) throw new Error(charged.error)
+      }
     }
 
     await membershipsCollection.update(membershipId, {
       status: 'ACTIVE',
       paymentStatus: 'COMPLETED',
+      subscriptionPlanId: subscriptionPlan.id,
       startDate: membership.startDate || now,
       expiryDate,
     })
 
-    if (hasDigitalCard(membership.cardType)) {
-      const membershipNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
-      if (membershipNumber) {
-        const till = await tillSystemFor(membership.tenantId)
-        const result = await till.enableCard({
-          cardNumber: membershipNumber.cardNumber.toString(),
-          membershipId,
-          expiryDate,
+    if (renewalTx) {
+      await paymentTransactionsCollection.update(renewalTx.id, {
+        metadata: { ...(renewalTx.metadata || {}), renewalApplied: true },
+      })
+    }
+
+    const tillNumber = await membershipNumbersCollection.findById(membership.membershipNumberId)
+    if (tillNumber && (hasDigitalCard(membership.cardType) || membership.tillSystemEnabled || renewalTx)) {
+      const till = await tillSystemFor(membership.tenantId)
+      const result = await till.enableCard({
+        cardNumber: tillNumber.cardNumber.toString(),
+        membershipId,
+        expiryDate,
+      })
+      if (result.success) {
+        await membershipsCollection.update(membershipId, {
+          tillSystemEnabled: true,
+          tillSystemEnabledAt: membership.tillSystemEnabledAt || now,
         })
-        if (result.success) {
-          await membershipsCollection.update(membershipId, {
-            tillSystemEnabled: true,
-            tillSystemEnabledAt: now,
-          })
-        }
       }
     }
   }
 
   await ensureReadyToEncode(membershipId)
 
-  const [member, membershipNumber] = await Promise.all([
+  const [member, membershipNumber, tenant] = await Promise.all([
     membersCollection.findById(membership.memberId),
     membershipNumbersCollection.findById(membership.membershipNumberId),
+    tenantsCollection.findById(membership.tenantId),
   ])
 
   if (hasDigitalCard(membership.cardType) && membershipNumber) {
     await ensureWalletPass(membershipId, membershipNumber.cardNumber)
+    const pass = await walletPassesCollection.findByMembershipId(membershipId)
+    if (pass) {
+      await walletPassesCollection.update(pass.id, { lastUpdated: now })
+    }
   }
 
-  if (!alreadyActive && member && membershipNumber) {
+  if ((renewalTx || firstIssue) && member && membershipNumber) {
     if (options?.notifyEmail !== false) {
-      await emailService.sendWelcomeEmail({
-        memberName: member.name,
-        memberEmail: member.email,
-        cardNumber: membershipNumber.cardNumber,
-        cardType: membership.cardType,
-        subscriptionName: subscriptionPlan.name,
-        expiryDate,
-        qrCodeUrl: hasDigitalCard(membership.cardType) ? link.cardUrl : undefined,
-      })
+      if (renewalTx) {
+        await emailService.sendRenewalConfirmation({
+          memberName: member.name,
+          memberEmail: member.email,
+          cardNumber: membershipNumber.cardNumber,
+          subscriptionName: subscriptionPlan.name,
+          expiryDate,
+          tenantName: tenant?.name,
+          logoPng: tenant?.logoPng,
+        })
+      } else {
+        await emailService.sendWelcomeEmail({
+          memberName: member.name,
+          memberEmail: member.email,
+          cardNumber: membershipNumber.cardNumber,
+          cardType: membership.cardType,
+          subscriptionName: subscriptionPlan.name,
+          expiryDate,
+          qrCodeUrl: hasDigitalCard(membership.cardType) ? link.cardUrl : undefined,
+          tenantName: tenant?.name,
+          logoPng: tenant?.logoPng,
+        })
+      }
     }
-    if (options?.notifySms !== false && hasDigitalCard(membership.cardType)) {
+    if (!renewalTx && options?.notifySms !== false && hasDigitalCard(membership.cardType)) {
       await notifyDigitalCardSms(membershipId)
     }
   }

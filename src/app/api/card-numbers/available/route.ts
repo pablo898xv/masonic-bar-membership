@@ -8,19 +8,18 @@ export async function GET(request: NextRequest) {
     if (error || !tenant) return error!
 
     const availableNumber = await membershipNumbersCollection.findFirstAvailable(tenant.id)
-    
+    const { stats } = await membershipNumbersCollection.findMany({ tenantId: tenant.id })
+
     if (!availableNumber) {
       return NextResponse.json(
-        { error: 'No available card numbers. Please import more numbers.' },
+        { error: 'No available physical card numbers. Import more printed stock.' },
         { status: 404 }
       )
     }
-    
-    const totalAvailable = await membershipNumbersCollection.countAvailable()
-    
+
     return NextResponse.json({
       nextAvailable: availableNumber,
-      totalAvailable
+      totalAvailable: stats.available,
     })
   } catch (error) {
     console.error('Error fetching available card number:', error)

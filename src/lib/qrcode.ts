@@ -2,7 +2,7 @@ import QRCode from 'qrcode'
 import { membershipsCollection, tenantsCollection } from './db'
 import { membershipQrGatewayUrl } from './card-link'
 import { getMagstripePrefix } from './settings'
-import { buildMembershipQrPayload, isTillQrPayload, qrCodeModeOf } from './qr-payload'
+import { buildMembershipQrPayload, isTillQrPayload, qrUsesGateway } from './qr-payload'
 
 export interface QRCodeOptions {
   width?: number
@@ -85,8 +85,8 @@ export async function generateQRCodeSVG(
 /**
  * Format membership card number for QR encoding.
  * Till mode uses ISO Track 2 sentinels: ;payload?
- * URL mode encodes a stable gateway URL on this platform (/q/{tenant}/{cardNumber}),
- * which redirects to the venue's current destination.
+ * URL and script modes encode a stable gateway URL on this platform (/q/{tenant}/{cardNumber}).
+ * URL mode then redirects to the venue's destination; script mode runs on that landing page.
  */
 export async function formatMembershipQRData(
   cardNumber: number,
@@ -101,7 +101,7 @@ export async function formatMembershipQRData(
     shortCode = membership?.shortCode
   }
   const gatewayUrl =
-    qrCodeModeOf(tenant?.qrCodeMode) === 'URL' && (tenant?.slug || shortCode)
+    qrUsesGateway(tenant?.qrCodeMode) && (tenant?.slug || shortCode)
       ? membershipQrGatewayUrl({
           tenantSlug: tenant?.slug,
           cardNumber,

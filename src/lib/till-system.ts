@@ -1,4 +1,5 @@
 import { tenantsCollection } from './db'
+import { withMagstripeSentinels } from './msrx6/protocol'
 
 export interface TillSystemCard {
   cardNumber: string
@@ -56,7 +57,7 @@ class TillSystemClient {
           card_number: card.cardNumber,
           membership_id: card.membershipId,
           expiry_date: card.expiryDate.toISOString(),
-          magstripe_data: card.magstripeData,
+          magstripe_data: card.magstripeData ? withMagstripeSentinels(card.magstripeData) : undefined,
         }),
       })
 

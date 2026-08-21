@@ -14,6 +14,8 @@ import { formatMagstripeData } from '@/lib/settings'
 import { fulfillPaidMembership } from '@/lib/fulfill-membership'
 import { findSignupIdentity, memberCardBlock } from '@/lib/member-card-limit'
 import { assertCreditsAvailable, creditsNeeded } from '@/lib/tenancy'
+import { defaultCardType, hasPhysicalCard, passTypesOf, venueOffersCardType } from '@/lib/card-type'
+import { allocateMembershipNumber, markNumberAssigned } from '@/lib/card-number-alloc'
 import { partnerIssueSchema } from '@/lib/validation'
 
 export type PartnerIssueBody = ReturnType<typeof partnerIssueSchema.parse>
@@ -40,25 +42,25 @@ export type PartnerIssueResult = {
 }
 
 async function resolveCardNumber(
-  tenantId: string,
+  tenant: Tenant,
   requested: number | undefined,
-  createIfMissing: boolean
+  createIfMissing: boolean,
+  cardType: string
 ): Promise<{ number: MembershipNumber; created: boolean } | PartnerIssueError> {
   if (!requested) {
-    const available = await membershipNumbersCollection.findFirstAvailable(tenantId)
-    if (!available) {
+    const allocated = await allocateMembershipNumber(tenant, cardType)
+    if (!allocated.ok) {
       return {
         ok: false,
-        status: 400,
-        code: 'NO_CARD_NUMBERS',
-        error:
-          'No card numbers are available. Pass cardNumber with createCardNumber true, or import numbers in admin.',
+        status: allocated.status,
+        code: cardType === 'QR_CODE' ? 'NO_QR_NUMBERS' : 'NO_CARD_NUMBERS',
+        error: allocated.error,
       }
     }
-    return { number: available, created: false }
+    return { number: allocated.number, created: allocated.number.pool === 'QR' }
   }
 
-  const existing = await membershipNumbersCollection.findByCardNumber(requested, tenantId)
+  const existing = await membershipNumbersCollection.findByCardNumber(requested, tenant.id)
   if (existing?.isAssigned) {
     return {
       ok: false,
@@ -67,7 +69,25 @@ async function resolveCardNumber(
       error: `Card number ${requested} is already assigned at this venue.`,
     }
   }
-  if (existing) return { number: existing, created: false }
+  if (existing) {
+    if (cardType === 'QR_CODE' && existing.pool !== 'QR') {
+      return {
+        ok: false,
+        status: 409,
+        code: 'PHYSICAL_STOCK_NUMBER',
+        error: `Card number ${requested} is printed physical stock. QR-only memberships use the venue QR number range.`,
+      }
+    }
+    if (cardType !== 'QR_CODE' && existing.pool === 'QR') {
+      return {
+        ok: false,
+        status: 409,
+        code: 'QR_NUMBER',
+        error: `Card number ${requested} is in the QR-only range. Import or pass a physical stock number.`,
+      }
+    }
+    return { number: existing, created: false }
+  }
 
   if (!createIfMissing) {
     return {
@@ -78,8 +98,17 @@ async function resolveCardNumber(
     }
   }
 
-  await membershipNumbersCollection.createMany([{ cardNumber: requested, batchId: 'partner-api' }], tenantId)
-  const created = await membershipNumbersCollection.findByCardNumber(requested, tenantId)
+  await membershipNumbersCollection.createMany(
+    [
+      {
+        cardNumber: requested,
+        batchId: 'partner-api',
+        pool: cardType === 'QR_CODE' ? 'QR' : 'PHYSICAL',
+      },
+    ],
+    tenant.id
+  )
+  const created = await membershipNumbersCollection.findByCardNumber(requested, tenant.id)
   if (!created) {
     return { ok: false, status: 500, code: 'CARD_NUMBER_CREATE_FAILED', error: 'Could not create that card number.' }
   }
@@ -95,7 +124,15 @@ export async function issuePartnerMembership(
     return { ok: false, status: 404, code: 'PLAN_NOT_FOUND', error: 'Subscription plan not found or inactive' }
   }
 
-  const cardType = body.cardType || 'QR_CODE'
+  const cardType = body.cardType || defaultCardType(passTypesOf(tenant.passTypes))
+  if (!venueOffersCardType(passTypesOf(tenant.passTypes), cardType)) {
+    return {
+      ok: false,
+      status: 400,
+      code: 'PASS_TYPE_DISABLED',
+      error: 'This venue does not offer that pass type.',
+    }
+  }
   const credits = await assertCreditsAvailable(tenant.id, creditsNeeded(cardType))
   if (!credits.ok) {
     return { ok: false, status: credits.status, code: 'NO_CREDITS', error: credits.error }
@@ -126,11 +163,11 @@ export async function issuePartnerMembership(
     })
   }
 
-  const resolved = await resolveCardNumber(tenant.id, body.cardNumber, body.createCardNumber === true)
+  const resolved = await resolveCardNumber(tenant, body.cardNumber, body.createCardNumber === true, cardType)
   if ('ok' in resolved) return resolved
 
   const card = resolved.number
-  await membershipNumbersCollection.update(card.id, { isAssigned: true, assignedAt: new Date() })
+  await markNumberAssigned(card)
 
   const membership = await membershipsCollection.create({
     tenantId: tenant.id,
@@ -146,7 +183,7 @@ export async function issuePartnerMembership(
     shortCode: await allocateCardShortCode(),
   })
 
-  if (cardType === 'PHYSICAL_CARD') {
+  if (hasPhysicalCard(cardType)) {
     await cardIssuancesCollection.create({
       membershipId: membership.id,
       tenantId: tenant.id,

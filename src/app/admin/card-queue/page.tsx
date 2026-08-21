@@ -9,6 +9,7 @@ import { Modal } from '@/components/ui/modal'
 import { BatchEncodeModal } from '@/components/admin/batch-encode-modal'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
 import { isMsrx6Cancelled } from '@/lib/msrx6/device'
+import { withMagstripeSentinels } from '@/lib/msrx6/protocol'
 
 interface CardIssuance {
   id: string
@@ -318,7 +319,7 @@ export default function CardQueuePage() {
                       Card #{issuance.membership.membershipNumber.cardNumber} • {issuance.membership.subscriptionPlan.name}
                     </p>
                     <p className="text-sm font-mono text-yellow-800 mt-1 break-all">
-                      Encode: <span className="font-bold">{issuance.magstripeData}</span>
+                      Encode: <span className="font-bold">{withMagstripeSentinels(issuance.magstripeData)}</span>
                     </p>
                   </div>
                   <Button
@@ -437,7 +438,7 @@ export default function CardQueuePage() {
             <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
               <p className="text-sm text-yellow-700">Magstripe data (till swipe):</p>
               <p className="text-2xl font-mono font-bold text-yellow-900 mt-1 break-all">
-                {selectedCard.magstripeData}
+                {withMagstripeSentinels(selectedCard.magstripeData)}
               </p>
             </div>
             <p className="text-sm text-gray-600">
@@ -521,7 +522,7 @@ export default function CardQueuePage() {
             <ol className="list-decimal list-inside space-y-1">
               <li>Take the physical card matching the card number shown</li>
               <li>Connect the card writer to your computer</li>
-              <li>Copy the magstripe data exactly as shown</li>
+              <li>Copy the magstripe data exactly as shown, including the ? at the end</li>
               <li>Write the magstripe data as shown (or use Write with MSRx6 on this page)</li>
               <li>Click "Mark Encoded" to confirm</li>
             </ol>

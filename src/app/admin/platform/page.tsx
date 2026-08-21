@@ -61,6 +61,14 @@ type SettingsForm = {
   smsWelcomeTemplate: string
   smsRenewalTemplate: string
   smsDigitalCardTemplate: string
+  emailWelcomeSubject: string
+  emailWelcomeTemplate: string
+  emailRenewalSubject: string
+  emailRenewalTemplate: string
+  emailRenewalConfirmSubject: string
+  emailRenewalConfirmTemplate: string
+  emailDigitalCardSubject: string
+  emailDigitalCardTemplate: string
   canManagePlatformIntegrations: boolean
 }
 
@@ -116,6 +124,14 @@ const emptyForm: SettingsForm = {
   smsWelcomeTemplate: '',
   smsRenewalTemplate: '',
   smsDigitalCardTemplate: '',
+  emailWelcomeSubject: '',
+  emailWelcomeTemplate: '',
+  emailRenewalSubject: '',
+  emailRenewalTemplate: '',
+  emailRenewalConfirmSubject: '',
+  emailRenewalConfirmTemplate: '',
+  emailDigitalCardSubject: '',
+  emailDigitalCardTemplate: '',
   canManagePlatformIntegrations: false,
 }
 
@@ -251,6 +267,14 @@ export default function PlatformSettingsPage() {
       smtpUser: form.smtpUser,
       smtpPass: form.smtpPass,
       emailFrom: form.emailFrom,
+      emailWelcomeSubject: form.emailWelcomeSubject,
+      emailWelcomeTemplate: form.emailWelcomeTemplate,
+      emailRenewalSubject: form.emailRenewalSubject,
+      emailRenewalTemplate: form.emailRenewalTemplate,
+      emailRenewalConfirmSubject: form.emailRenewalConfirmSubject,
+      emailRenewalConfirmTemplate: form.emailRenewalConfirmTemplate,
+      emailDigitalCardSubject: form.emailDigitalCardSubject,
+      emailDigitalCardTemplate: form.emailDigitalCardTemplate,
     })
   }
 
@@ -465,6 +489,9 @@ export default function PlatformSettingsPage() {
           <form onSubmit={handleWallet} className="space-y-4">
             <p className="text-sm text-gray-600">
               Required to issue signed .pkpass files. Until this is complete, members receive a QR image instead.
+              Apple Wallet stacks every generic pass signed with this Pass Type ID, so cards from different venues
+              appear together under Ashlar Technologies. The pass face still uses the venue name and logo.
+              Separate Apple stacks need a Pass Type ID and certificate per venue.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
@@ -511,6 +538,7 @@ export default function PlatformSettingsPage() {
           <form onSubmit={handleGoogleWallet} className="space-y-4">
             <p className="text-sm text-gray-600">
               Required to show Add to Google Wallet on the digital card. Create an issuer in the Google Pay &amp; Wallet Console, enable the Google Wallet API, then upload a service account JSON. Google also reviews new issuers before live saves work.
+              Each venue gets its own class from the suffix below (for example <span className="font-mono">membership-colonnade</span>), so cards are not stacked as one Ashlar Technologies issuer group.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
@@ -574,7 +602,7 @@ export default function PlatformSettingsPage() {
         <CardContent>
           <form onSubmit={handleEmail} className="space-y-4">
             <p className="text-sm text-gray-600">
-              Welcome emails and renewal reminders 30 days before expiry. Without SMTP, messages are logged but not sent.
+              Welcome emails, digital card notices, and renewal reminders 30 days before expiry. Without SMTP, messages are logged but not sent.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <Input
@@ -620,6 +648,81 @@ export default function PlatformSettingsPage() {
               />
               Use TLS (SMTP_SECURE)
             </label>
+            <div className="space-y-3 pt-2">
+              <p className="text-sm font-medium text-gray-900">Email templates</p>
+              <Input
+                label="Welcome subject"
+                value={form.emailWelcomeSubject}
+                onChange={(event) => setField('emailWelcomeSubject', event.target.value)}
+              />
+              <div>
+                <label htmlFor="email-welcome-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Welcome body
+                </label>
+                <textarea
+                  id="email-welcome-template"
+                  value={form.emailWelcomeTemplate}
+                  onChange={(event) => setField('emailWelcomeTemplate', event.target.value)}
+                  rows={8}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <Input
+                label="Renewal reminder subject"
+                value={form.emailRenewalSubject}
+                onChange={(event) => setField('emailRenewalSubject', event.target.value)}
+              />
+              <div>
+                <label htmlFor="email-renewal-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Renewal reminder body
+                </label>
+                <textarea
+                  id="email-renewal-template"
+                  value={form.emailRenewalTemplate}
+                  onChange={(event) => setField('emailRenewalTemplate', event.target.value)}
+                  rows={8}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <Input
+                label="Renewal confirmation subject"
+                value={form.emailRenewalConfirmSubject}
+                onChange={(event) => setField('emailRenewalConfirmSubject', event.target.value)}
+              />
+              <div>
+                <label htmlFor="email-renewal-confirm-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Renewal confirmation body
+                </label>
+                <textarea
+                  id="email-renewal-confirm-template"
+                  value={form.emailRenewalConfirmTemplate}
+                  onChange={(event) => setField('emailRenewalConfirmTemplate', event.target.value)}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <Input
+                label="Digital card subject"
+                value={form.emailDigitalCardSubject}
+                onChange={(event) => setField('emailDigitalCardSubject', event.target.value)}
+              />
+              <div>
+                <label htmlFor="email-digital-template" className="block text-sm font-medium text-gray-700 mb-1">
+                  Digital card body
+                </label>
+                <textarea
+                  id="email-digital-template"
+                  value={form.emailDigitalCardTemplate}
+                  onChange={(event) => setField('emailDigitalCardTemplate', event.target.value)}
+                  rows={6}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg shadow-sm bg-white dark:bg-slate-900 text-gray-900 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <p className="text-xs text-gray-500">
+                Digital card email is sent when a QR code is issued, and from Send card email. URLs in the body become links.
+                Merge fields: {'{{tenant_name}}'}, {'{{member_name}}'}, {'{{card_number}}'}, {'{{plan}}'}, {'{{expiry}}'}, {'{{days}}'}, {'{{renewal_url}}'}, {'{{card_url}}'}, {'{{card_type}}'}, {'{{card_type_text}}'}
+              </p>
+            </div>
             <div className="flex justify-end">
               <Button type="submit" loading={saving === 'email'}>Save email settings</Button>
             </div>

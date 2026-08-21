@@ -9,6 +9,7 @@ import {
 import { getMagstripePrefix, getMagstripeTracks, magstripeEncodingCopy } from '@/lib/settings'
 import { isPaidMembershipStatus } from '@/lib/payment-methods'
 import { requireTenant } from '@/lib/tenancy'
+import { hasPhysicalCard } from '@/lib/card-type'
 
 export async function GET(request: NextRequest) {
   try {
@@ -35,6 +36,12 @@ export async function GET(request: NextRequest) {
         ])
 
         if (!member || !membershipNumber || !subscriptionPlan) return null
+        if (!hasPhysicalCard(membership.cardType)) {
+          if (issuance.queueStatus === 'PENDING' || issuance.queueStatus === 'READY_TO_ENCODE') {
+            await cardIssuancesCollection.delete(issuance.id)
+          }
+          return null
+        }
         
         return {
           ...issuance,

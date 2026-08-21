@@ -1,20 +1,18 @@
 import nodemailer from 'nodemailer'
-import { getAppSettings } from './settings'
+import { decodeTenantPng } from './branding'
+import { AppSettings, getAppSettings } from './settings'
 
 /**
  * Email Service Module
- * 
+ *
  * Handles sending emails for the membership system including:
  * - Renewal reminder emails
  * - Welcome emails
- * - Payment confirmation emails
- * 
- * Configuration required:
- * - SMTP_HOST: SMTP server hostname
- * - SMTP_PORT: SMTP server port
- * - SMTP_USER: SMTP username
- * - SMTP_PASS: SMTP password
- * - EMAIL_FROM: From address for emails
+ * - Digital card emails
+ *
+ * Subjects and bodies are edited in platform settings. Merge fields match SMS:
+ * {{tenant_name}}, {{member_name}}, {{card_number}}, {{plan}}, {{expiry}},
+ * {{days}}, {{renewal_url}}, {{card_url}}, {{card_type}}, {{card_type_text}}
  */
 
 interface EmailOptions {
@@ -22,6 +20,143 @@ interface EmailOptions {
   subject: string
   html: string
   text?: string
+  attachments?: Array<{
+    filename: string
+    content: Buffer
+    contentType: string
+    cid: string
+    contentDisposition?: 'inline' | 'attachment'
+  }>
+}
+
+export type EmailMergeFields = {
+  tenant_name?: string
+  member_name?: string
+  card_number?: string | number
+  plan?: string
+  expiry?: string
+  days?: string | number
+  renewal_url?: string
+  card_url?: string
+  card_type?: string
+  card_type_text?: string
+}
+
+type EmailKind = 'welcome' | 'renewal' | 'renewalConfirm' | 'digitalCard'
+
+function mergeEmailTemplate(template: string, fields: EmailMergeFields) {
+  return template
+    .replace(/\{\{\s*([a-z_]+)\s*\}\}/gi, (_, key: string) => {
+      const value = fields[key as keyof EmailMergeFields]
+      return value == null ? '' : String(value)
+    })
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function emailBodyToHtml(body: string) {
+  const linked = escapeHtml(body).replace(
+    /(https?:\/\/[^\s<]+)/g,
+    '<a href="$1" style="color:#2563eb;word-break:break-all;">$1</a>'
+  )
+  return linked
+    .split(/\n{2,}/)
+    .map((para) => `<p style="margin:0 0 16px 0;">${para.replace(/\n/g, '<br>')}</p>`)
+    .join('')
+}
+
+function wrapMemberEmail(bodyHtml: string, title: string, brandName: string, hasLogo: boolean) {
+  const logo = hasLogo
+    ? `<img src="cid:venue-logo" alt="${escapeHtml(brandName)}" width="160" style="max-height:64px;width:auto;max-width:160px;height:auto;margin:0 auto 14px;display:block;background:#ffffff;padding:8px 12px;border-radius:8px;" />`
+    : ''
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(title)}</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
+    ${logo}
+    <h1 style="color: white; margin: 0; font-size: 24px;">${escapeHtml(brandName)}</h1>
+    <p style="color: rgba(255,255,255,0.8); margin: 10px 0 0 0;">${escapeHtml(title)}</p>
+  </div>
+  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none;">
+    ${bodyHtml}
+  </div>
+  <div style="background: #1e3a5f; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
+    <p style="color: rgba(255,255,255,0.7); margin: 0; font-size: 12px;">
+      ${escapeHtml(brandName)}<br>
+      This is an automated email.
+    </p>
+  </div>
+</body>
+</html>`
+}
+
+function formatDate(value: Date) {
+  return value.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+}
+
+function cardTypeCopy(cardType: 'QR_CODE' | 'PHYSICAL_CARD' | 'BOTH') {
+  if (cardType === 'QR_CODE') {
+    return {
+      label: 'Digital QR Code',
+      text: 'Your digital membership card is ready to use immediately.',
+    }
+  }
+  if (cardType === 'BOTH') {
+    return {
+      label: 'Digital QR and Physical Card',
+      text: 'You can use your digital membership card now, and a physical card can also be issued at the bar.',
+    }
+  }
+  return {
+    label: 'Physical Card',
+    text: 'Your physical membership card is being prepared and will be available for collection at the bar.',
+  }
+}
+
+function templatesFor(settings: AppSettings, kind: EmailKind) {
+  if (kind === 'welcome') {
+    return {
+      subject: settings.emailWelcomeSubject,
+      body: settings.emailWelcomeTemplate,
+      title: 'Your membership is now active',
+    }
+  }
+  if (kind === 'renewal') {
+    return {
+      subject: settings.emailRenewalSubject,
+      body: settings.emailRenewalTemplate,
+      title: 'Membership renewal reminder',
+    }
+  }
+  if (kind === 'renewalConfirm') {
+    return {
+      subject: settings.emailRenewalConfirmSubject,
+      body: settings.emailRenewalConfirmTemplate,
+      title: 'Membership renewed',
+    }
+  }
+  return {
+    subject: settings.emailDigitalCardSubject,
+    body: settings.emailDigitalCardTemplate,
+    title: 'Your digital card',
+  }
 }
 
 class EmailService {
@@ -67,12 +202,47 @@ class EmailService {
         subject: options.subject,
         html: options.html,
         text: options.text,
+        attachments: options.attachments,
       })
       return { success: true }
     } catch (error: any) {
       console.error('Failed to send email:', error)
       return { success: false, error: error.message }
     }
+  }
+
+  private async sendTemplated(
+    kind: EmailKind,
+    to: string,
+    fields: EmailMergeFields,
+    logoPng?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const settings = await getAppSettings()
+    const templates = templatesFor(settings, kind)
+    const subject = mergeEmailTemplate(templates.subject, fields)
+    const text = mergeEmailTemplate(templates.body, fields)
+    if (!subject || !text) {
+      return { success: false, error: 'The email template is empty' }
+    }
+    const brandName = fields.tenant_name || 'Membership Manager'
+    const logo = decodeTenantPng(logoPng)
+    return this.sendEmail({
+      to,
+      subject,
+      text,
+      html: wrapMemberEmail(emailBodyToHtml(text), templates.title, brandName, Boolean(logo)),
+      attachments: logo
+        ? [
+            {
+              filename: 'logo.png',
+              content: logo,
+              contentType: 'image/png',
+              cid: 'venue-logo',
+              contentDisposition: 'inline',
+            },
+          ]
+        : undefined,
+    })
   }
 
   async sendRenewalReminder(params: {
@@ -82,111 +252,47 @@ class EmailService {
     expiryDate: Date
     subscriptionName: string
     renewalUrl: string
+    tenantName?: string
+    logoPng?: string
   }): Promise<{ success: boolean; error?: string }> {
-    const { memberName, memberEmail, cardNumber, expiryDate, subscriptionName, renewalUrl } = params
-    
-    const formattedDate = expiryDate.toLocaleDateString('en-GB', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    })
+    const daysUntilExpiry = Math.ceil((params.expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+    return this.sendTemplated(
+      'renewal',
+      params.memberEmail,
+      {
+        tenant_name: params.tenantName || 'Membership Manager',
+        member_name: params.memberName,
+        card_number: params.cardNumber,
+        plan: params.subscriptionName,
+        expiry: formatDate(params.expiryDate),
+        days: daysUntilExpiry,
+        renewal_url: params.renewalUrl,
+      },
+      params.logoPng
+    )
+  }
 
-    const daysUntilExpiry = Math.ceil((expiryDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Membership Renewal Reminder</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">Membership Manager</h1>
-    <p style="color: rgba(255,255,255,0.8); margin: 10px 0 0 0;">Membership Renewal Reminder</p>
-  </div>
-  
-  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none;">
-    <p style="margin-top: 0;">Dear ${memberName},</p>
-    
-    <p>We wanted to remind you that your membership will be expiring soon.</p>
-    
-    <div style="background: white; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #f0ad4e;">
-      <p style="margin: 0 0 10px 0; font-weight: 600; color: #856404;">Your membership expires in ${daysUntilExpiry} days</p>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Card Number:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${cardNumber}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Current Plan:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${subscriptionName}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Expiry Date:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${formattedDate}</td>
-        </tr>
-      </table>
-    </div>
-    
-    <p>To continue enjoying member discounts and benefits at the bar, please renew your membership before the expiry date.</p>
-    
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${renewalUrl}" style="display: inline-block; background: #2563eb; color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">Renew My Membership</a>
-    </div>
-    
-    <p style="color: #666; font-size: 14px;">If the button doesn't work, copy and paste this link into your browser:</p>
-    <p style="color: #2563eb; font-size: 14px; word-break: break-all;">${renewalUrl}</p>
-    
-    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 30px 0;">
-    
-    <p style="color: #666; font-size: 14px; margin-bottom: 0;">
-      If you have any questions, please speak to the bar manager.<br>
-      Thank you for being a valued member!
-    </p>
-  </div>
-  
-  <div style="background: #1e3a5f; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
-    <p style="color: rgba(255,255,255,0.7); margin: 0; font-size: 12px;">
-      Membership Manager<br>
-      This is an automated reminder email.
-    </p>
-  </div>
-</body>
-</html>
-`
-
-    const text = `
-Membership Manager - Membership Renewal Reminder
-
-Dear ${memberName},
-
-We wanted to remind you that your membership will be expiring soon.
-
-Your membership expires in ${daysUntilExpiry} days
-
-Card Number: ${cardNumber}
-Current Plan: ${subscriptionName}
-Expiry Date: ${formattedDate}
-
-To continue enjoying member discounts and benefits at the bar, please renew your membership before the expiry date.
-
-Renew your membership here: ${renewalUrl}
-
-If you have any questions, please speak to the bar manager.
-
-Thank you for being a valued member!
-
-Membership Manager
-`
-
-    return this.sendEmail({
-      to: memberEmail,
-      subject: `Your Membership Manager membership expires in ${daysUntilExpiry} days`,
-      html,
-      text,
-    })
+  async sendRenewalConfirmation(params: {
+    memberName: string
+    memberEmail: string
+    cardNumber: number
+    subscriptionName: string
+    expiryDate: Date
+    tenantName?: string
+    logoPng?: string
+  }): Promise<{ success: boolean; error?: string }> {
+    return this.sendTemplated(
+      'renewalConfirm',
+      params.memberEmail,
+      {
+        tenant_name: params.tenantName || 'Membership Manager',
+        member_name: params.memberName,
+        card_number: params.cardNumber,
+        plan: params.subscriptionName,
+        expiry: formatDate(params.expiryDate),
+      },
+      params.logoPng
+    )
   }
 
   async sendWelcomeEmail(params: {
@@ -197,119 +303,25 @@ Membership Manager
     subscriptionName: string
     expiryDate: Date
     qrCodeUrl?: string
+    tenantName?: string
+    logoPng?: string
   }): Promise<{ success: boolean; error?: string }> {
-    const { memberName, memberEmail, cardNumber, cardType, subscriptionName, expiryDate, qrCodeUrl } = params
-
-    const formattedDate = expiryDate.toLocaleDateString('en-GB', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric'
-    })
-
-    const cardTypeText =
-      cardType === 'QR_CODE'
-        ? 'Your digital membership card is ready to use immediately.'
-        : cardType === 'BOTH'
-          ? 'You can use your digital membership card now, and a physical card can also be issued at the bar.'
-          : 'Your physical membership card is being prepared and will be available for collection at the bar.'
-
-    const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Welcome to Membership Manager</title>
-</head>
-<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-  <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%); padding: 30px; text-align: center; border-radius: 12px 12px 0 0;">
-    <h1 style="color: white; margin: 0; font-size: 24px;">Welcome to Membership Manager!</h1>
-    <p style="color: rgba(255,255,255,0.8); margin: 10px 0 0 0;">Your membership is now active</p>
-  </div>
-  
-  <div style="background: #f8f9fa; padding: 30px; border: 1px solid #e9ecef; border-top: none;">
-    <p style="margin-top: 0;">Dear ${memberName},</p>
-    
-    <p>Thank you for becoming a member! ${cardTypeText}</p>
-    
-    <div style="background: white; border-radius: 8px; padding: 20px; margin: 20px 0; border-left: 4px solid #28a745;">
-      <p style="margin: 0 0 10px 0; font-weight: 600; color: #155724;">Membership Details</p>
-      <table style="width: 100%; border-collapse: collapse;">
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Card Number:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${cardNumber}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Membership Plan:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${subscriptionName}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Valid Until:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${formattedDate}</td>
-        </tr>
-        <tr>
-          <td style="padding: 8px 0; color: #666;">Card Type:</td>
-          <td style="padding: 8px 0; font-weight: 600; text-align: right;">${
-            cardType === 'QR_CODE' ? 'Digital QR Code' : cardType === 'BOTH' ? 'Digital QR and Physical Card' : 'Physical Card'
-          }</td>
-        </tr>
-      </table>
-    </div>
-    
-    ${(cardType === 'QR_CODE' || cardType === 'BOTH') && qrCodeUrl ? `
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${qrCodeUrl}" style="display: inline-block; background: #2563eb; color: white; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px;">View Your Digital Card</a>
-    </div>
-    ` : ''}
-    
-    <p>Simply present your membership card at the bar to receive your member discounts.</p>
-    
-    <hr style="border: none; border-top: 1px solid #e9ecef; margin: 30px 0;">
-    
-    <p style="color: #666; font-size: 14px; margin-bottom: 0;">
-      We look forward to seeing you at the bar!<br>
-      Membership Manager
-    </p>
-  </div>
-  
-  <div style="background: #1e3a5f; padding: 20px; text-align: center; border-radius: 0 0 12px 12px;">
-    <p style="color: rgba(255,255,255,0.7); margin: 0; font-size: 12px;">
-      Membership Manager<br>
-      This is an automated email.
-    </p>
-  </div>
-</body>
-</html>
-`
-
-    const text = `
-Welcome to Membership Manager!
-
-Dear ${memberName},
-
-Thank you for becoming a member! ${cardTypeText}
-
-Membership Details:
-- Card Number: ${cardNumber}
-- Membership Plan: ${subscriptionName}
-- Valid Until: ${formattedDate}
-- Card Type: ${cardType === 'QR_CODE' ? 'Digital QR Code' : cardType === 'BOTH' ? 'Digital QR and Physical Card' : 'Physical Card'}
-
-${(cardType === 'QR_CODE' || cardType === 'BOTH') && qrCodeUrl ? `View your digital card here: ${qrCodeUrl}` : ''}
-
-Simply present your membership card at the bar to receive your member discounts.
-
-We look forward to seeing you at the bar!
-
-Membership Manager
-`
-
-    return this.sendEmail({
-      to: memberEmail,
-      subject: 'Welcome to Membership Manager - Your membership is active!',
-      html,
-      text,
-    })
+    const copy = cardTypeCopy(params.cardType)
+    return this.sendTemplated(
+      'welcome',
+      params.memberEmail,
+      {
+        tenant_name: params.tenantName || 'Membership Manager',
+        member_name: params.memberName,
+        card_number: params.cardNumber,
+        plan: params.subscriptionName,
+        expiry: formatDate(params.expiryDate),
+        card_url: params.qrCodeUrl || '',
+        card_type: copy.label,
+        card_type_text: copy.text,
+      },
+      params.logoPng
+    )
   }
 
   async sendDigitalCardEmail(params: {
@@ -317,18 +329,20 @@ Membership Manager
     memberEmail: string
     cardNumber: number
     qrCodeUrl: string
+    tenantName?: string
+    logoPng?: string
   }): Promise<{ success: boolean; error?: string }> {
-    const { memberName, memberEmail, cardNumber, qrCodeUrl } = params
-    return this.sendEmail({
-      to: memberEmail,
-      subject: 'Your Membership Manager digital card',
-      html: `
-        <p>Hi ${memberName},</p>
-        <p>A digital membership card is now available for card #${cardNumber}. Show the QR code at the bar, or keep the physical card if you already have one.</p>
-        <p><a href="${qrCodeUrl}">Open your digital card</a></p>
-      `,
-      text: `Hi ${memberName},\n\nA digital membership card is now available for card #${cardNumber}.\n\nOpen it here: ${qrCodeUrl}\n`,
-    })
+    return this.sendTemplated(
+      'digitalCard',
+      params.memberEmail,
+      {
+        tenant_name: params.tenantName || 'Membership Manager',
+        member_name: params.memberName,
+        card_number: params.cardNumber,
+        card_url: params.qrCodeUrl,
+      },
+      params.logoPng
+    )
   }
 }
 

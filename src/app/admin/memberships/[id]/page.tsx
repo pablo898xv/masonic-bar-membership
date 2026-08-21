@@ -13,10 +13,12 @@ import { DeleteMembershipButton } from '@/components/admin/delete-membership-but
 import { Modal } from '@/components/ui/modal'
 import { useMsrx6 } from '@/lib/msrx6/use-msrx6'
 import { isMsrx6Cancelled } from '@/lib/msrx6/device'
-import { cardTypeLabel, hasDigitalCard, hasPhysicalCard } from '@/lib/card-type'
+import { cardTypeLabel, hasDigitalCard, hasPhysicalCard, passTypesOf, venueAllowsFormat, type VenuePassTypes } from '@/lib/card-type'
 import { isManualPaymentMethod, paymentMethodLabel } from '@/lib/payment-methods'
 import { formatGbp } from '@/lib/money'
 import { type PaymentOptionsView } from '@/components/payment-method-picker'
+import { canRenewMembership, isRenewalPayment, renewedExpiryDate } from '@/lib/renewal'
+import { withMagstripeSentinels } from '@/lib/msrx6/protocol'
 
 interface MembershipPayment {
   method?: string | null
@@ -44,6 +46,7 @@ interface MembershipDetail {
     paymentMethod: string
     status: string
     amount: number
+    metadata?: Record<string, unknown>
   } | null
   startDate?: string
   expiryDate?: string
@@ -61,6 +64,7 @@ interface MembershipDetail {
     cardNumber: number
   }
   subscriptionPlan: {
+    id?: string
     name: string
     durationYears: number
     price: number
@@ -124,28 +128,45 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   const [encodeMessage, setEncodeMessage] = useState<string | null>(null)
   const [formatLoading, setFormatLoading] = useState(false)
   const [smsLoading, setSmsLoading] = useState(false)
-  const [smsNotice, setSmsNotice] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [notifyNotice, setNotifyNotice] = useState<{ type: 'ok' | 'error'; text: string } | null>(null)
   const [creditBalance, setCreditBalance] = useState<number | null>(null)
+  const [passTypes, setPassTypes] = useState<VenuePassTypes>(passTypesOf())
+  const [plans, setPlans] = useState<Array<{ id: string; name: string; durationYears: number; price: number }>>([])
+  const [renewOpen, setRenewOpen] = useState(false)
+  const [renewPlanId, setRenewPlanId] = useState('')
+  const [renewMethod, setRenewMethod] = useState('CASH')
+  const [renewLoading, setRenewLoading] = useState(false)
   const writer = useMsrx6()
 
   const fetchMembership = async () => {
     try {
-      const [res, tenantRes] = await Promise.all([
+      const [res, tenantRes, plansRes] = await Promise.all([
         fetch(`/api/memberships/${id}`),
         fetch('/api/tenants/current'),
+        fetch('/api/subscription-plans?active=true'),
       ])
       if (!res.ok) throw new Error('Membership not found')
       const data = await res.json()
       setMembership(data)
-      if (typeof data.paymentMethod === 'string') {
+      if (typeof data.pendingPayment?.paymentMethod === 'string') {
+        setPaymentMethodDraft(data.pendingPayment.paymentMethod)
+      } else if (typeof data.paymentMethod === 'string') {
         setPaymentMethodDraft(data.paymentMethod)
       }
       const tenantData = await tenantRes.json()
       setCreditBalance(
         typeof tenantData.tenant?.creditBalance === 'number' ? tenantData.tenant.creditBalance : 0
       )
+      setPassTypes(passTypesOf(tenantData.tenant?.passTypes))
       if (tenantData.tenant?.payments) {
         setPayments(tenantData.tenant.payments)
+      }
+      if (plansRes.ok) {
+        const plansData = await plansRes.json()
+        const list = Array.isArray(plansData) ? plansData : []
+        setPlans(list)
+        setRenewPlanId((current) => current || data.subscriptionPlan?.id || list[0]?.id || '')
       }
       setError('')
     } catch (err) {
@@ -243,6 +264,48 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
     }
   }
 
+  const handleRenew = async () => {
+    if (!membership || !renewPlanId) return
+    setRenewLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/memberships/${membership.id}/renew`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscriptionPlanId: renewPlanId,
+          paymentMethod: renewMethod,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || 'Failed to start renewal')
+      setRenewOpen(false)
+      if (data.paymentRequired && (renewMethod === 'CARD' || renewMethod === 'OPEN_BANKING')) {
+        const pay = await fetch('/api/payments/initiate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            membershipId: membership.id,
+            paymentMethod: renewMethod,
+            returnUrl: window.location.href,
+          }),
+        })
+        const payData = await pay.json().catch(() => ({}))
+        if (!pay.ok) throw new Error(payData.error || 'Failed to start payment')
+        const checkoutUrl = payData.redirectUrl || payData.paymentUrl
+        if (checkoutUrl) {
+          window.location.href = checkoutUrl
+          return
+        }
+      }
+      await fetchMembership()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to renew membership')
+    } finally {
+      setRenewLoading(false)
+    }
+  }
+
   const handleEnableTill = async () => {
     if (!membership) return
     setTillLoading(true)
@@ -265,14 +328,27 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   }
 
   const magstripeData = membership?.magstripeData || membership?.cardIssuance?.magstripeData
+  const magstripeDisplay = magstripeData ? withMagstripeSentinels(magstripeData) : magstripeData
+  const pendingRenewal = isRenewalPayment(membership?.pendingPayment)
+  const awaitingPayment = membership?.status === 'PENDING_PAYMENT' || pendingRenewal
+  const canRenew = Boolean(
+    membership &&
+      canRenewMembership({ status: membership.status, expiryDate: membership.expiryDate }) &&
+      !pendingRenewal
+  )
+  const renewPlan = plans.find((plan) => plan.id === renewPlanId)
   const canIssueCards = Boolean(
     membership &&
       membership.status !== 'PENDING_PAYMENT' &&
       membership.status !== 'CANCELLED'
   )
   const canEncode = canIssueCards && Boolean(magstripeData)
-  const issuingPhysical = Boolean(membership && !hasPhysicalCard(membership.cardType))
-  const issuingDigital = Boolean(membership && !hasDigitalCard(membership.cardType))
+  const issuingPhysical = Boolean(
+    membership && !hasPhysicalCard(membership.cardType) && venueAllowsFormat(passTypes, 'PHYSICAL_CARD')
+  )
+  const issuingDigital = Boolean(
+    membership && !hasDigitalCard(membership.cardType) && venueAllowsFormat(passTypes, 'QR_CODE')
+  )
   const outOfCredits = creditBalance !== null && creditBalance < 1
   const blockedNewIssue = outOfCredits && (issuingPhysical || issuingDigital)
 
@@ -302,24 +378,48 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
   const handleSendCardSms = async () => {
     if (!membership || !hasDigitalCard(membership.cardType)) return
     setSmsLoading(true)
-    setSmsNotice(null)
+    setNotifyNotice(null)
     setError('')
     try {
       const res = await fetch(`/api/memberships/${membership.id}/notify-sms`, { method: 'POST' })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to send SMS')
-      setSmsNotice({
+      setNotifyNotice({
         type: 'ok',
         text: data.to ? `Card SMS sent to ${data.to}` : 'Card SMS sent',
       })
       await fetchMembership()
     } catch (err) {
-      setSmsNotice({
+      setNotifyNotice({
         type: 'error',
         text: err instanceof Error ? err.message : 'Failed to send SMS',
       })
     } finally {
       setSmsLoading(false)
+    }
+  }
+
+  const handleSendCardEmail = async () => {
+    if (!membership || !hasDigitalCard(membership.cardType)) return
+    setEmailLoading(true)
+    setNotifyNotice(null)
+    setError('')
+    try {
+      const res = await fetch(`/api/memberships/${membership.id}/notify-email`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to send email')
+      setNotifyNotice({
+        type: 'ok',
+        text: data.to ? `Card email sent to ${data.to}` : 'Card email sent',
+      })
+      await fetchMembership()
+    } catch (err) {
+      setNotifyNotice({
+        type: 'error',
+        text: err instanceof Error ? err.message : 'Failed to send email',
+      })
+    } finally {
+      setEmailLoading(false)
     }
   }
 
@@ -501,10 +601,12 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
                 <span className="font-medium text-gray-900 text-right">{membership.payment.note}</span>
               </div>
             )}
-            {membership.status === 'PENDING_PAYMENT' && (
+            {awaitingPayment && (
               <div className="pt-3 space-y-3 border-t border-gray-200">
                 <p className="text-sm text-gray-600">
-                  Cards and QR codes stay blocked until this is paid. Change the method, take online payment, record cash / in person, or issue as complimentary.
+                  {pendingRenewal
+                    ? 'A renewal payment is outstanding. The extra year is added from the current expiry once this is paid. Card number stays the same.'
+                    : 'Cards and QR codes stay blocked until this is paid. Change the method, take online payment, record cash / in person, or issue as complimentary.'}
                 </p>
                 <Select
                   label="Payment method"
@@ -623,13 +725,13 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
           {magstripeData && (
             <div className="p-3 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-500">Magstripe</p>
-              <p className="font-mono font-medium text-gray-900">{magstripeData}</p>
+              <p className="font-mono font-medium text-gray-900">{magstripeDisplay}</p>
             </div>
           )}
 
           {membership.cardType === 'QR_CODE' && canEncode && (
             <p className="text-sm text-gray-600">
-              This member signed up for a digital QR card. You can also encode a plastic card with the same number.
+              This member signed up for a digital QR card. Encoding a plastic card writes this QR number onto a blank card. It does not take a number from printed physical stock.
             </p>
           )}
           {membership.cardType === 'PHYSICAL_CARD' && canIssueCards && (
@@ -646,18 +748,18 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
             </p>
           )}
 
-          {smsNotice && (
+          {notifyNotice && (
             <p className={`text-sm rounded-lg p-3 ${
-              smsNotice.type === 'ok'
+              notifyNotice.type === 'ok'
                 ? 'bg-green-50 text-green-800 border border-green-200'
                 : 'bg-red-50 text-red-800 border border-red-200'
             }`}>
-              {smsNotice.text}
+              {notifyNotice.text}
             </p>
           )}
 
           <div className="flex flex-wrap gap-2">
-            {canEncode && magstripeData && (
+            {canEncode && magstripeData && (hasPhysicalCard(membership.cardType) || issuingPhysical) && (
               <Button
                 size="sm"
                 onClick={openEncode}
@@ -678,6 +780,11 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
                 Issue digital QR
               </Button>
             )}
+            {canRenew && (
+              <Button size="sm" variant="secondary" onClick={() => setRenewOpen(true)}>
+                Renew membership
+              </Button>
+            )}
             {membership.status === 'ACTIVE' && !membership.tillSystemEnabled && (
               <Button size="sm" onClick={handleEnableTill} loading={tillLoading}>
                 Enable till access
@@ -694,14 +801,24 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
               </Link>
             )}
             {hasDigitalCard(membership.cardType) && canIssueCards && (
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleSendCardSms}
-                loading={smsLoading}
-              >
-                Send card SMS
-              </Button>
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleSendCardEmail}
+                  loading={emailLoading}
+                >
+                  Send card email
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleSendCardSms}
+                  loading={smsLoading}
+                >
+                  Send card SMS
+                </Button>
+              </>
             )}
             {(hasPhysicalCard(membership.cardType) || membership.cardIssuance) && (
               <Link href="/admin/card-queue">
@@ -711,6 +828,54 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
           </div>
         </CardContent>
       </Card>
+
+      <Modal
+        isOpen={renewOpen}
+        onClose={() => setRenewOpen(false)}
+        title="Renew membership"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Card number {membership.membershipNumber.cardNumber} stays the same. The extra year is added from
+            the current expiry, not from today. Replacement cards are not issued.
+          </p>
+          <Select
+            label="Plan"
+            value={renewPlanId}
+            onChange={(event) => setRenewPlanId(event.target.value)}
+            options={plans.map((plan) => ({
+              value: plan.id,
+              label: `${plan.name} — ${formatGbp(plan.price)} (${plan.durationYears} year${plan.durationYears > 1 ? 's' : ''})`,
+            }))}
+          />
+          <Select
+            label="Payment method"
+            value={renewMethod}
+            onChange={(event) => setRenewMethod(event.target.value)}
+            options={[
+              ...(payments.openBanking ? [{ value: 'OPEN_BANKING', label: 'Open banking' }] : []),
+              ...(payments.card.length ? [{ value: 'CARD', label: payments.cardLabel || 'Card' }] : []),
+              { value: 'CASH', label: 'Cash' },
+              { value: 'IN_PERSON', label: 'In person' },
+              { value: 'COMPLIMENTARY', label: 'Complimentary (no charge)' },
+            ]}
+          />
+          {renewPlan && membership.expiryDate && (
+            <p className="text-sm text-gray-700">
+              New expiry:{' '}
+              <strong>{formatDate(renewedExpiryDate(membership.expiryDate, renewPlan.durationYears).toISOString())}</strong>
+            </p>
+          )}
+          <div className="flex justify-end gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setRenewOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRenew} loading={renewLoading} disabled={!renewPlanId}>
+              {renewMethod === 'CARD' || renewMethod === 'OPEN_BANKING' ? 'Pay and renew' : 'Renew'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         isOpen={encodeOpen}
@@ -726,10 +891,11 @@ export default function MembershipDetailPage({ params }: { params: Promise<{ id:
         <div className="space-y-4">
           <div className="p-4 bg-yellow-50 rounded-lg border-2 border-yellow-300">
             <p className="text-sm text-yellow-700">Magstripe data (till swipe):</p>
-            <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">{magstripeData}</p>
+            <p className="text-2xl font-mono font-bold text-yellow-900 mt-1">{magstripeDisplay}</p>
           </div>
           <p className="text-sm text-gray-600">
             Match the physical card numbered <strong>{membership.membershipNumber.cardNumber}</strong> on the back.
+            Replacement cards keep this membership’s current expiry.
             {writer.connected
               ? ' Swipe once to encode, then swipe again to verify.'
               : ' Connect the MSRx6 from the bar at the top of the page first.'}
