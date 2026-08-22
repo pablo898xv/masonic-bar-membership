@@ -5,7 +5,7 @@ import { getMsrx6BrowserSupport, isMsrx6Cancelled, Msrx6Session, type Msrx6Trans
 import { tracksFromMagstripe, tracksMatch, summarizeIsoTracks, normalizeMagstripeTracks, type Coercivity, type IsoTracks, type MagstripeTrack } from './protocol'
 
 export type WriterPhase = 'idle' | 'connecting' | 'ready' | 'writing' | 'verifying' | 'reading'
-export type ConnectMethod = Msrx6Transport | 'bluetooth-all' | 'remembered'
+export type ConnectMethod = Msrx6Transport | 'usb' | 'bluetooth-all' | 'remembered'
 
 type RememberedDevice = {
   transport: Msrx6Transport
@@ -124,10 +124,22 @@ function useMsrx6Controller(): Msrx6Writer {
         const remembered = loadRemembered()
         if (!remembered) throw new Error('No paired MSRx6 yet. Connect Bluetooth or USB once.')
         if (remembered.transport === 'bluetooth') await session.reconnectBluetooth(remembered.deviceId)
-        else if (remembered.transport === 'serial') await session.reconnectSerial()
-        else await session.reconnectHid()
+        else if (remembered.transport === 'serial') {
+          try {
+            await session.reconnectSerial()
+          } catch {
+            await session.reconnectHid()
+          }
+        } else {
+          try {
+            await session.reconnectHid()
+          } catch {
+            await session.reconnectSerial()
+          }
+        }
       } else if (method === 'bluetooth') await session.connectBluetooth(false)
       else if (method === 'bluetooth-all') await session.connectBluetooth(true)
+      else if (method === 'usb') await session.connectUsb()
       else if (method === 'serial') await session.connectSerial()
       else await session.connectHid()
 

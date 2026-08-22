@@ -7,13 +7,39 @@ import {
   findDeviceStatus,
   parseIsoRead,
   statusLabel,
+  unwrapHidReport,
   wrapHidPackets,
+  wrapMagneticFoxFrames,
   type Coercivity,
   type DeviceStatus,
   type IsoTracks,
 } from './protocol'
 
 export type Msrx6Transport = 'bluetooth' | 'serial' | 'hid'
+
+/** Deftun MSRx6 / MSR605X enumerates as MagTek HID (0801:0003), not a COM port. */
+const MAGTEK_VENDOR_ID = 0x0801
+const MAGTEK_PRODUCT_ID = 0x0003
+
+const HID_FILTERS = [
+  { vendorId: MAGTEK_VENDOR_ID, productId: MAGTEK_PRODUCT_ID },
+  { vendorId: MAGTEK_VENDOR_ID },
+  { vendorId: 0x0dd4 },
+  { vendorId: 0x0c2e },
+  { vendorId: 0x0acd },
+  { vendorId: 0x0bca },
+  { vendorId: 0x0483 },
+  { vendorId: 0x1a86 },
+  { vendorId: 0x0403 },
+  { vendorId: 0x067b },
+  { vendorId: 0x10c4 },
+  { vendorId: 0x0810 },
+  { usagePage: 0xff00 },
+  { usagePage: 0xffa0 },
+]
+
+const HID_CHOOSER_HINT =
+  'Chrome lists the MSRx6 as Unknown device (0801:0003) or MagTek Magstripe Insert Reader. Pick that one. Close EasyMSR if it is open.'
 
 const BLE_OPTIONAL_SERVICES = [
   '0000ffe0-0000-1000-8000-00805f9b34fb',
@@ -77,6 +103,8 @@ type SerialPortLike = {
   writable: WritableStream<Uint8Array> | null
   open(options: { baudRate: number; bufferSize?: number }): Promise<void>
   close(): Promise<void>
+  getInfo?(): { usbVendorId?: number; usbProductId?: number }
+  forget?(): Promise<void>
 }
 
 type SerialLike = {
@@ -84,12 +112,25 @@ type SerialLike = {
   getPorts?(): Promise<SerialPortLike[]>
 }
 
+type HidReportInfoLike = {
+  reportId?: number
+}
+
+type HidCollectionLike = {
+  outputReports?: HidReportInfoLike[]
+  children?: HidCollectionLike[]
+}
+
 type HidDeviceLike = {
+  vendorId?: number
+  productId?: number
   productName?: string
+  collections?: HidCollectionLike[]
   opened: boolean
   open(): Promise<void>
   close(): Promise<void>
   sendReport(reportId: number, data: BufferSource): Promise<void>
+  sendFeatureReport?(reportId: number, data: BufferSource): Promise<void>
   addEventListener(type: string, listener: (event: Event) => void): void
   removeEventListener(type: string, listener: (event: Event) => void): void
 }
@@ -133,6 +174,112 @@ export class Msrx6CancelledError extends Error {
 
 export function isMsrx6Cancelled(error: unknown) {
   return error instanceof Msrx6CancelledError || (error instanceof Error && error.name === 'Msrx6CancelledError')
+}
+
+function isChooserCancel(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const name = 'name' in error ? String(error.name) : ''
+  const message = error instanceof Error ? error.message : ''
+  return name === 'NotFoundError' || /cancelled|canceled|No device selected|chooser/i.test(message)
+}
+
+function isMagtekHid(vendorId?: number, productId?: number) {
+  return vendorId === MAGTEK_VENDOR_ID && (productId == null || productId === MAGTEK_PRODUCT_ID)
+}
+
+function hidDeviceName(device: HidDeviceLike) {
+  const named = device.productName?.trim()
+  if (named && !/^unknown(\s+device)?$/i.test(named)) return named
+  if (isMagtekHid(device.vendorId, device.productId)) return 'MSRx6 USB'
+  const vid = device.vendorId
+  const pid = device.productId
+  if (vid != null && pid != null) {
+    return `MSRx6 USB (${vid.toString(16).padStart(4, '0')}:${pid.toString(16).padStart(4, '0')})`
+  }
+  return 'MSRx6 USB'
+}
+
+function hidOutputReportIds(device: HidDeviceLike): number[] {
+  const ids: number[] = []
+  const walk = (collections?: HidCollectionLike[]) => {
+    for (const collection of collections || []) {
+      for (const report of collection.outputReports || []) {
+        if (typeof report.reportId === 'number') ids.push(report.reportId)
+      }
+      walk(collection.children)
+    }
+  }
+  walk(device.collections)
+  return [...new Set(ids)]
+}
+
+function asReport(bytes: Uint8Array) {
+  const report = new Uint8Array(bytes.byteLength)
+  report.set(bytes)
+  return report
+}
+
+function preferredHidReportId(device: HidDeviceLike) {
+  const ids = hidOutputReportIds(device)
+  if (isMagtekHid(device.vendorId, device.productId)) {
+    if (ids.includes(0xff)) return 0xff
+    return 0xff
+  }
+  if (ids.length) return ids[0]
+  return 0
+}
+
+async function sendHidFrames(
+  send: (reportId: number, data: BufferSource) => Promise<void>,
+  reportId: number,
+  frames: Uint8Array[]
+) {
+  for (const frame of frames) {
+    const report = asReport(frame)
+    try {
+      await send(reportId, report)
+    } catch (error) {
+      if (report.length <= 63) throw error
+      await send(reportId, asReport(report.subarray(0, 63)))
+    }
+    await delay(8)
+  }
+}
+
+function hidSenders(device: HidDeviceLike): Array<(data: Uint8Array) => Promise<void>> {
+  const interrupt = (reportId: number, frames: (data: Uint8Array) => Uint8Array[]) => {
+    return (data: Uint8Array) => sendHidFrames((id, payload) => device.sendReport(id, payload), reportId, frames(data))
+  }
+  const feature = (reportId: number, frames: (data: Uint8Array) => Uint8Array[]) => {
+    return async (data: Uint8Array) => {
+      if (!device.sendFeatureReport) {
+        throw new Error('Feature reports are not available')
+      }
+      await sendHidFrames((id, payload) => device.sendFeatureReport!(id, payload), reportId, frames(data))
+    }
+  }
+
+  if (isMagtekHid(device.vendorId, device.productId)) {
+    return [
+      interrupt(0xff, (data) => wrapMagneticFoxFrames(data, 63)),
+      feature(0, wrapHidPackets),
+      feature(0xff, wrapHidPackets),
+      interrupt(0xff, wrapHidPackets),
+      interrupt(0, wrapHidPackets),
+      interrupt(0xff, (data) => wrapMagneticFoxFrames(data, 64)),
+      interrupt(0xff, (data) => [data]),
+      interrupt(0, (data) => [data]),
+    ]
+  }
+
+  const reportId = preferredHidReportId(device)
+  return [
+    interrupt(reportId, wrapHidPackets),
+    interrupt(0xff, wrapHidPackets),
+    interrupt(0, wrapHidPackets),
+    feature(0, wrapHidPackets),
+    interrupt(reportId, (data) => [data]),
+  ]
 }
 
 class BytePump {
@@ -181,7 +328,14 @@ class BytePump {
           reject(error)
         },
         timer: setTimeout(() => {
-          waiter.reject(new Error(`${label} timed out. Swipe the card through the writer and try again.`))
+          const swipeHint = /swipe|card|verify/i.test(label)
+          waiter.reject(
+            new Error(
+              swipeHint
+                ? `${label} timed out. Swipe the card through the writer and try again.`
+                : `${label} timed out. Close EasyMSR if it is open, unplug the writer, plug it back in, then Connect USB again.`
+            )
+          )
         }, timeoutMs),
       }
 
@@ -208,6 +362,7 @@ export class Msrx6Session {
   private sendBytes: ((data: Uint8Array) => Promise<void>) | null = null
   private cleanup: (() => Promise<void>) | null = null
   private hidWrap = false
+  private hidReportId = 0
   private cancelled = false
 
   get connected() {
@@ -254,6 +409,22 @@ export class Msrx6Session {
     await this.bindBluetoothDevice(device)
   }
 
+  async connectUsb() {
+    const nav = hardwareNavigator()
+    if (!nav.hid && !nav.serial) {
+      throw new Error('USB writers need Chrome or Edge on this computer, with the MSRx6 plugged in.')
+    }
+    if (nav.hid) {
+      try {
+        await this.connectHid()
+        return
+      } catch (error) {
+        if (!isChooserCancel(error) || !nav.serial) throw error
+      }
+    }
+    await this.connectSerial()
+  }
+
   async connectSerial() {
     const nav = hardwareNavigator()
     if (!nav.serial) {
@@ -277,9 +448,15 @@ export class Msrx6Session {
     if (!nav.hid) {
       throw new Error('WebHID is not available. Use Chrome or Edge, then plug the MSRx6 in over USB.')
     }
-    const [device] = await nav.hid.requestDevice({ filters: [] })
+    const remembered = await nav.hid.getDevices?.()
+    const magtek = remembered?.find((item) => isMagtekHid(item.vendorId, item.productId))
+    if (magtek) {
+      await this.bindHidDevice(magtek)
+      return
+    }
+    const [device] = await nav.hid.requestDevice({ filters: HID_FILTERS })
     if (!device) {
-      throw new Error('No USB HID device selected.')
+      throw new Error(HID_CHOOSER_HINT)
     }
     await this.bindHidDevice(device)
   }
@@ -290,7 +467,8 @@ export class Msrx6Session {
     if (!devices?.length) {
       throw new Error('No remembered USB HID writer. Click USB HID once to grant access.')
     }
-    await this.bindHidDevice(devices[0])
+    const magtek = devices.find((item) => isMagtekHid(item.vendorId, item.productId))
+    await this.bindHidDevice(magtek || devices[0])
   }
 
   private async bindBluetoothDevice(device: BluetoothDeviceLike) {
@@ -378,6 +556,17 @@ export class Msrx6Session {
   }
 
   private async bindSerialPort(port: SerialPortLike) {
+    const info = port.getInfo?.()
+    if (isMagtekHid(info?.usbVendorId, info?.usbProductId)) {
+      try {
+        await port.forget?.()
+      } catch {
+        // Chrome may not support forget on this port
+      }
+      await this.connectHid()
+      return
+    }
+
     if (!port.readable) {
       await port.open({ baudRate: 9600, bufferSize: 255 })
     }
@@ -434,44 +623,42 @@ export class Msrx6Session {
     if (!device.opened) {
       await device.open()
     }
+    await delay(250)
 
     const onInput = (event: Event) => {
-      const report = event as Event & { data?: DataView }
+      const report = event as Event & { data?: DataView; reportId?: number }
       if (!report.data) return
       const view = report.data
-      this.pump.push(new Uint8Array(view.buffer, view.byteOffset, view.byteLength))
+      const raw = new Uint8Array(view.buffer, view.byteOffset, view.byteLength)
+      this.pump.push(unwrapHidReport(raw))
     }
     device.addEventListener('inputreport', onInput)
 
-    this.name = device.productName || 'MSRx6 USB HID'
+    this.name = hidDeviceName(device)
     this.deviceId = null
     this.transport = 'hid'
     this.hidWrap = true
-    this.sendBytes = async (data) => {
-      const packets = wrapHidPackets(data)
-      for (const packet of packets) {
-        const body = new Uint8Array(packet.length - 1)
-        body.set(packet.subarray(1))
-        await device.sendReport(packet[0], body)
-        await delay(8)
-      }
-    }
     this.cleanup = async () => {
       device.removeEventListener('inputreport', onInput)
       if (device.opened) await device.close()
     }
 
-    try {
-      await this.probe()
-    } catch {
-      this.hidWrap = false
-      this.sendBytes = async (data) => {
-        const copy = new Uint8Array(data.length)
-        copy.set(data)
-        await device.sendReport(0, copy)
+    let lastError: unknown
+    for (const send of hidSenders(device)) {
+      this.sendBytes = send
+      try {
+        await this.probe(800)
+        return
+      } catch (error) {
+        lastError = error
       }
-      await this.probe()
     }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(
+          'Connected over USB, but the writer did not answer. Close EasyMSR, unplug the MSRx6, plug it back in, then Connect USB again.'
+        )
   }
 
   async disconnect() {
@@ -545,13 +732,10 @@ export class Msrx6Session {
     return tracks
   }
 
-  private async probe() {
-    this.pump.clear()
-    await this.send(commands.reset)
-    await delay(150)
+  private async probe(timeoutMs = 2500) {
     this.pump.clear()
     await this.send(commands.commTest)
-    const status = await this.waitForStatus(2500, 'Writer handshake')
+    const status = await this.waitForStatus(timeoutMs, 'Writer handshake')
     if (status !== 'commOk' && status !== 'ok') {
       throw new Error('Connected, but the device did not speak the MSRx6/MSR605 protocol.')
     }

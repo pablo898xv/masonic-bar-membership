@@ -239,24 +239,52 @@ export function statusLabel(status: DeviceStatus): string {
   }
 }
 
-/** MSR605X-style 64-byte HID frames wrapping the serial protocol. */
-export function wrapHidPackets(payload: Uint8Array, reportId = 0): Uint8Array[] {
-  const packets: Uint8Array[] = []
-  const first = new Uint8Array(1 + 62)
+/**
+ * Magnetic-Fox / hidapi write for 0801:0003:
+ * report ID 0xFF, then a 63-byte payload starting with 0x00 and the serial bytes.
+ */
+export function wrapMagneticFoxFrames(payload: Uint8Array, frameSize = 63): Uint8Array[] {
+  const size = frameSize < 63 ? 63 : frameSize
+  const frames: Uint8Array[] = []
+  const first = new Uint8Array(size)
   first[0] = 0x00
-  first.set(payload.slice(0, 62), 1)
-
-  const rest: Uint8Array[] = [first]
-  for (let i = 62; i < payload.length; i += 63) {
-    rest.push(payload.slice(i, i + 63))
+  first.set(payload.subarray(0, Math.min(62, payload.length)), 1)
+  frames.push(first)
+  for (let offset = 62; offset < payload.length; offset += 63) {
+    const frame = new Uint8Array(size)
+    frame.set(payload.subarray(offset, offset + 63))
+    frames.push(frame)
   }
+  return frames
+}
 
-  for (const chunk of rest) {
+/** MSR605X / MSRx6 USB HID: 64-byte reports wrapping the serial protocol. */
+export function wrapHidPackets(payload: Uint8Array): Uint8Array[] {
+  const packets: Uint8Array[] = []
+  const max = 63
+  if (!payload.length) {
+    const empty = new Uint8Array(64)
+    empty[0] = 0xc0
+    packets.push(empty)
+    return packets
+  }
+  for (let offset = 0; offset < payload.length; offset += max) {
+    const chunk = payload.subarray(offset, offset + max)
+    const first = offset === 0
+    const last = offset + chunk.length >= payload.length
     const packet = new Uint8Array(64)
-    packet[0] = reportId
-    packet.set(chunk.length > 63 ? chunk.slice(0, 63) : chunk, 1)
+    packet[0] = (first ? 0x80 : 0) | (last ? 0x40 : 0) | chunk.length
+    packet.set(chunk, 1)
     packets.push(packet)
   }
-
   return packets
+}
+
+export function unwrapHidReport(data: Uint8Array): Uint8Array {
+  if (data.length < 2) return data
+  const header = data[0]
+  if ((header & 0xc0) === 0) return data
+  const length = header & 0x3f
+  if (!length || length > data.length - 1) return data
+  return data.subarray(1, 1 + length)
 }

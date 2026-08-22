@@ -14,7 +14,8 @@ function phaseLabel(phase: ReturnType<typeof useMsrx6>['phase']) {
 
 export function Msrx6StatusBar() {
   const writer = useMsrx6()
-  const chromeHint = !writer.support.bluetooth && !writer.support.serial
+  const chromeHint = !writer.support.secureContext || (!writer.support.bluetooth && !writer.support.serial && !writer.support.hid)
+  const usbAvailable = writer.support.hid || writer.support.serial
   const status = writer.connected
     ? [writer.deviceName, phaseLabel(writer.phase)].filter(Boolean).join(' · ')
     : phaseLabel(writer.phase)
@@ -64,21 +65,11 @@ export function Msrx6StatusBar() {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => writer.connect('serial')}
-            disabled={!writer.support.serial || writer.phase === 'connecting'}
+            onClick={() => writer.connect('usb')}
+            disabled={!usbAvailable || writer.phase === 'connecting'}
           >
-            USB
+            {writer.connected && (writer.transport === 'hid' || writer.transport === 'serial') ? 'Reconnect USB' : 'Connect USB'}
           </Button>
-          {writer.support.hid && (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => writer.connect('hid')}
-              disabled={writer.phase === 'connecting'}
-            >
-              USB HID
-            </Button>
-          )}
           <Button
             size="sm"
             variant="ghost"
@@ -96,7 +87,14 @@ export function Msrx6StatusBar() {
       </div>
       {chromeHint && (
         <p className="pt-1 text-xs text-amber-800 dark:text-amber-200">
-          Use Chrome or Edge on this Mac. Safari cannot talk to the writer.
+          {!writer.support.secureContext
+            ? 'USB and Bluetooth writers need https (or localhost) in Chrome or Edge. Safari cannot talk to the writer.'
+            : 'Use Chrome or Edge on this Mac. Safari cannot talk to the writer.'}
+        </p>
+      )}
+      {!writer.connected && writer.support.hid && (
+        <p className="pt-1 text-xs text-gray-500 dark:text-slate-400">
+          Chrome lists the USB writer as Unknown device (0801:0003) — that is the MSRx6. Close EasyMSR, then Connect USB and pick it.
         </p>
       )}
       {writer.error && <p className="pt-1 text-xs text-red-700">{writer.error}</p>}

@@ -49,7 +49,7 @@ const nextConfig: NextConfig = {
   async headers() {
     const defaultHeaders = [
       ...securityHeaders,
-      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=(), serial=(self), hid=(self), usb=(self), bluetooth=(self)' },
       { key: 'Content-Security-Policy', value: defaultCsp },
     ]
     const scanHeaders = [
